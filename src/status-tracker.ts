@@ -25,7 +25,10 @@ export function getStatus(): StatusState {
   return { ...state };
 }
 
-export function setDiscordConnected(connected: boolean, botName?: string): void {
+export function setDiscordConnected(
+  connected: boolean,
+  botName?: string,
+): void {
   state.discordConnected = connected;
   if (botName) state.botName = botName;
 }
@@ -55,7 +58,11 @@ export function removeSseListener(fn: StatusListener): void {
 
 export function broadcastSse(event: SseEvent): void {
   for (const fn of listeners) {
-    try { fn(event); } catch { /* ignore dead clients */ }
+    try {
+      fn(event);
+    } catch {
+      /* ignore dead clients */
+    }
   }
 }
 

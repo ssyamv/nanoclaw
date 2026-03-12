@@ -547,11 +547,25 @@ async function main(): Promise<void> {
       } catch (err) {
         connectAttempt++;
         if (connectAttempt >= maxConnectAttempts) {
-          logger.fatal({ channel: channelName, err, attempt: connectAttempt }, 'Channel failed to connect after max attempts');
+          logger.fatal(
+            { channel: channelName, err, attempt: connectAttempt },
+            'Channel failed to connect after max attempts',
+          );
           process.exit(1);
         }
-        const delay = Math.min(5000 * Math.pow(2, connectAttempt - 1), 5 * 60 * 1000);
-        logger.warn({ channel: channelName, err, attempt: connectAttempt, delaySec: Math.round(delay / 1000) }, 'Channel connect failed, retrying');
+        const delay = Math.min(
+          5000 * Math.pow(2, connectAttempt - 1),
+          5 * 60 * 1000,
+        );
+        logger.warn(
+          {
+            channel: channelName,
+            err,
+            attempt: connectAttempt,
+            delaySec: Math.round(delay / 1000),
+          },
+          'Channel connect failed, retrying',
+        );
         await new Promise((r) => setTimeout(r, delay));
       }
     }
