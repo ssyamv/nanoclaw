@@ -1,9 +1,27 @@
-import { Client, Events, GatewayIntentBits, Message, TextChannel } from 'discord.js';
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Message,
+  TextChannel,
+} from 'discord.js';
+import { ProxyAgent, setGlobalDispatcher } from 'undici';
+
+// Set up proxy at module load time so all undici requests (including discord.js REST) use it
+const _proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (_proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(_proxyUrl));
+}
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
+import {
+  broadcastStatus,
+  recordReconnect,
+  setDiscordConnected,
+} from '../status-tracker.js';
 import {
   Channel,
   OnChatMetadata,
@@ -17,28 +35,82 @@ export interface DiscordChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
+// Fatal Discord WebSocket close codes — do NOT reconnect on these
+const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
+
 export class DiscordChannel implements Channel {
   name = 'discord';
 
   private client: Client | null = null;
   private opts: DiscordChannelOpts;
   private botToken: string;
+  private destroyed = false;
+  private reconnecting = false; // guard against concurrent reconnect loops
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
   }
 
+  private async attemptReconnect(attempt: number): Promise<void> {
+    if (this.destroyed || this.reconnecting) return;
+    this.reconnecting = true;
+
+    try {
+      const maxAttempts = 20;
+      if (attempt >= maxAttempts) {
+        logger.error(
+          { attempt },
+          'Discord max reconnect attempts reached, giving up',
+        );
+        return;
+      }
+
+      // Exponential backoff: 5s, 10s, 20s, 40s... capped at 5 minutes
+      const delay = Math.min(5000 * Math.pow(2, attempt), 5 * 60 * 1000);
+      logger.warn(
+        { attempt, delaySec: Math.round(delay / 1000) },
+        'Discord scheduling reconnect',
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (this.destroyed) return;
+
+      if (this.client) {
+        this.client.removeAllListeners();
+        this.client.destroy();
+        this.client = null;
+      }
+
+      this.reconnecting = false; // reset so connect() can set up fresh listeners
+      recordReconnect();
+      await this.connect();
+      logger.info({ attempt }, 'Discord reconnected successfully');
+    } catch (err) {
+      logger.error({ err, attempt }, 'Discord reconnect attempt failed');
+      this.reconnecting = false;
+      if (!this.destroyed) {
+        void this.attemptReconnect(attempt + 1);
+      }
+    }
+  }
+
   async connect(): Promise<void> {
-    this.client = new Client({
+    this.destroyed = false;
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    const clientOptions: ConstructorParameters<typeof Client>[0] = {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
       ],
-    });
-
+    };
+    if (proxyUrl) {
+      // undici proxy already set at module load time
+      // tls.connect is patched by scripts/setup-proxy.cjs for ws WebSocket
+    }
+    this.client = new Client(clientOptions);
     this.client.on(Events.MessageCreate, async (message: Message) => {
       // Ignore bot messages (including own)
       if (message.author.bot) return;
@@ -88,18 +160,20 @@ export class DiscordChannel implements Channel {
 
       // Handle attachments — store placeholders so the agent knows something was sent
       if (message.attachments.size > 0) {
-        const attachmentDescriptions = [...message.attachments.values()].map((att) => {
-          const contentType = att.contentType || '';
-          if (contentType.startsWith('image/')) {
-            return `[Image: ${att.name || 'image'}]`;
-          } else if (contentType.startsWith('video/')) {
-            return `[Video: ${att.name || 'video'}]`;
-          } else if (contentType.startsWith('audio/')) {
-            return `[Audio: ${att.name || 'audio'}]`;
-          } else {
-            return `[File: ${att.name || 'file'}]`;
-          }
-        });
+        const attachmentDescriptions = [...message.attachments.values()].map(
+          (att) => {
+            const contentType = att.contentType || '';
+            if (contentType.startsWith('image/')) {
+              return `[Image: ${att.name || 'image'}]`;
+            } else if (contentType.startsWith('video/')) {
+              return `[Video: ${att.name || 'video'}]`;
+            } else if (contentType.startsWith('audio/')) {
+              return `[Audio: ${att.name || 'audio'}]`;
+            } else {
+              return `[File: ${att.name || 'file'}]`;
+            }
+          },
+        );
         if (content) {
           content = `${content}\n${attachmentDescriptions.join('\n')}`;
         } else {
@@ -125,7 +199,13 @@ export class DiscordChannel implements Channel {
 
       // Store chat metadata for discovery
       const isGroup = message.guild !== null;
-      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'discord', isGroup);
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'discord',
+        isGroup,
+      );
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
@@ -159,12 +239,53 @@ export class DiscordChannel implements Channel {
       logger.error({ err: err.message }, 'Discord client error');
     });
 
-    return new Promise<void>((resolve) => {
+    // Handle shard errors (e.g. TLS reset, ECONNRESET) — trigger reconnection
+    this.client.on(Events.ShardError, (err, shardId) => {
+      if (this.destroyed) return;
+      logger.warn(
+        { err: err.message, shardId },
+        'Discord shard error, scheduling reconnect',
+      );
+      setDiscordConnected(false);
+      broadcastStatus();
+      void this.attemptReconnect(0);
+    });
+
+    // Handle shard disconnects — trigger reconnection unless fatal close code
+    this.client.on(Events.ShardDisconnect, (closeEvent, shardId) => {
+      if (this.destroyed) return;
+      if (FATAL_CLOSE_CODES.has(closeEvent.code)) {
+        logger.error(
+          { code: closeEvent.code, shardId },
+          'Discord fatal close code, not reconnecting (check token/intents)',
+        );
+        setDiscordConnected(false);
+        broadcastStatus();
+        return;
+      }
+      logger.warn(
+        { code: closeEvent.code, shardId },
+        'Discord shard disconnected, scheduling reconnect',
+      );
+      setDiscordConnected(false);
+      broadcastStatus();
+      void this.attemptReconnect(0);
+    });
+
+    // Login with a 60-second timeout to avoid hanging on network issues
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Discord login timed out after 60 seconds'));
+      }, 60000);
+
       this.client!.once(Events.ClientReady, (readyClient) => {
+        clearTimeout(timeout);
         logger.info(
           { username: readyClient.user.tag, id: readyClient.user.id },
           'Discord bot connected',
         );
+        setDiscordConnected(true, readyClient.user.tag);
+        broadcastStatus();
         console.log(`\n  Discord bot: ${readyClient.user.tag}`);
         console.log(
           `  Use /chatid command or check channel IDs in Discord settings\n`,
@@ -172,7 +293,10 @@ export class DiscordChannel implements Channel {
         resolve();
       });
 
-      this.client!.login(this.botToken);
+      this.client!.login(this.botToken).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
     });
   }
 
@@ -217,7 +341,9 @@ export class DiscordChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.destroyed = true;
     if (this.client) {
+      this.client.removeAllListeners();
       this.client.destroy();
       this.client = null;
       logger.info('Discord bot stopped');
