@@ -55,6 +55,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { startStatusServer } from './status-server.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -471,6 +472,9 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Start the web status monitor (log tailing is handled inside startStatusServer)
+  startStatusServer();
+
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
@@ -533,7 +537,24 @@ async function main(): Promise<void> {
       continue;
     }
     channels.push(channel);
-    await channel.connect();
+    // Retry initial connect with exponential backoff (handles network not ready at startup)
+    let connectAttempt = 0;
+    const maxConnectAttempts = 10;
+    while (true) {
+      try {
+        await channel.connect();
+        break;
+      } catch (err) {
+        connectAttempt++;
+        if (connectAttempt >= maxConnectAttempts) {
+          logger.fatal({ channel: channelName, err, attempt: connectAttempt }, 'Channel failed to connect after max attempts');
+          process.exit(1);
+        }
+        const delay = Math.min(5000 * Math.pow(2, connectAttempt - 1), 5 * 60 * 1000);
+        logger.warn({ channel: channelName, err, attempt: connectAttempt, delaySec: Math.round(delay / 1000) }, 'Channel connect failed, retrying');
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
