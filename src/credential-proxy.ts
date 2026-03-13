@@ -17,7 +17,6 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
-import { recordTokenUsage } from './status-tracker.js';
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -169,7 +168,6 @@ export function startCredentialProxy(
                 }
               }
               if (inputTokens > 0 || outputTokens > 0) {
-                recordTokenUsage(reqModel, inputTokens, outputTokens);
               }
             });
           },
@@ -205,3 +203,4 @@ export function detectAuthMode(): AuthMode {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
   return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 }
+
