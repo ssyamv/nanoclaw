@@ -60,7 +60,6 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
-import { startStatusServer } from './status-server.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -485,8 +484,6 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
-  // Start the web status monitor (log tailing is handled inside startStatusServer)
-  startStatusServer();
 
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
@@ -644,3 +641,4 @@ if (isDirectRun) {
     process.exit(1);
   });
 }
+
