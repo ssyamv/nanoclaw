@@ -18,11 +18,6 @@ import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
-  broadcastStatus,
-  recordReconnect,
-  setDiscordConnected,
-} from '../status-tracker.js';
-import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
@@ -83,7 +78,6 @@ export class DiscordChannel implements Channel {
       }
 
       this.reconnecting = false; // reset so connect() can set up fresh listeners
-      recordReconnect();
       await this.connect();
       logger.info({ attempt }, 'Discord reconnected successfully');
     } catch (err) {
@@ -245,10 +239,7 @@ export class DiscordChannel implements Channel {
       logger.warn(
         { err: err.message, shardId },
         'Discord shard error, scheduling reconnect',
-      );
-      setDiscordConnected(false);
-      broadcastStatus();
-      void this.attemptReconnect(0);
+      );      void this.attemptReconnect(0);
     });
 
     // Handle shard disconnects — trigger reconnection unless fatal close code
@@ -258,18 +249,12 @@ export class DiscordChannel implements Channel {
         logger.error(
           { code: closeEvent.code, shardId },
           'Discord fatal close code, not reconnecting (check token/intents)',
-        );
-        setDiscordConnected(false);
-        broadcastStatus();
-        return;
+        );        return;
       }
       logger.warn(
         { code: closeEvent.code, shardId },
         'Discord shard disconnected, scheduling reconnect',
-      );
-      setDiscordConnected(false);
-      broadcastStatus();
-      void this.attemptReconnect(0);
+      );      void this.attemptReconnect(0);
     });
 
     // Login with a 60-second timeout to avoid hanging on network issues
@@ -283,10 +268,7 @@ export class DiscordChannel implements Channel {
         logger.info(
           { username: readyClient.user.tag, id: readyClient.user.id },
           'Discord bot connected',
-        );
-        setDiscordConnected(true, readyClient.user.tag);
-        broadcastStatus();
-        console.log(`\n  Discord bot: ${readyClient.user.tag}`);
+        );        console.log(`\n  Discord bot: ${readyClient.user.tag}`);
         console.log(
           `  Use /chatid command or check channel IDs in Discord settings\n`,
         );
@@ -374,3 +356,4 @@ registerChannel('discord', (opts: ChannelOpts) => {
   }
   return new DiscordChannel(token, opts);
 });
+
