@@ -94,7 +94,9 @@ export function startCredentialProxy(
             const reqJson = JSON.parse(body.toString('utf8'));
             reqModel = String(reqJson.model || '');
             isStreaming = !!reqJson.stream;
-          } catch { /* ignore parse errors */ }
+          } catch {
+            /* ignore parse errors */
+          }
         }
 
         const upstream = makeRequest(
@@ -136,11 +138,14 @@ export function startCredentialProxy(
                     const evt = JSON.parse(data);
                     if (evt.type === 'message_start' && evt.message?.usage) {
                       inputTokens = evt.message.usage.input_tokens ?? 0;
-                      if (!reqModel && evt.message.model) reqModel = evt.message.model;
+                      if (!reqModel && evt.message.model)
+                        reqModel = evt.message.model;
                     } else if (evt.type === 'message_delta' && evt.usage) {
                       outputTokens = evt.usage.output_tokens ?? 0;
                     }
-                  } catch { /* ignore */ }
+                  } catch {
+                    /* ignore */
+                  }
                 }
               } else {
                 // Buffer full response for non-streaming
@@ -155,11 +160,13 @@ export function startCredentialProxy(
                 try {
                   const json = JSON.parse(sseBuffer);
                   if (json.usage) {
-                    inputTokens  = json.usage.input_tokens  ?? 0;
+                    inputTokens = json.usage.input_tokens ?? 0;
                     outputTokens = json.usage.output_tokens ?? 0;
                   }
                   if (!reqModel && json.model) reqModel = json.model;
-                } catch { /* ignore */ }
+                } catch {
+                  /* ignore */
+                }
               }
               if (inputTokens > 0 || outputTokens > 0) {
                 recordTokenUsage(reqModel, inputTokens, outputTokens);

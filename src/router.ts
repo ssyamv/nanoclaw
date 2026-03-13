@@ -38,19 +38,19 @@ export function isApiError(text: string): boolean {
 
   // API error patterns that indicate transient failures
   const errorPatterns = [
-    /api error:\s*\d{3}/i,                    // "API Error: 502", "API Error: 403"
-    /failed to authenticate/i,                // Auth failures
-    /getaddrinfo enotfound/i,                 // DNS resolution failures
-    /econnrefused/i,                          // Connection refused
-    /request not allowed/i,                   // 403 forbidden
-    /bad gateway/i,                           // 502 errors
-    /service unavailable/i,                   // 503 errors
-    /gateway timeout/i,                       // 504 errors
-    /rate limit exceeded/i,                   // Rate limiting
-    /network error/i,                         // Generic network errors
+    /api error:\s*\d{3}/i, // "API Error: 502", "API Error: 403"
+    /failed to authenticate/i, // Auth failures
+    /getaddrinfo enotfound/i, // DNS resolution failures
+    /econnrefused/i, // Connection refused
+    /request not allowed/i, // 403 forbidden
+    /bad gateway/i, // 502 errors
+    /service unavailable/i, // 503 errors
+    /gateway timeout/i, // 504 errors
+    /rate limit exceeded/i, // Rate limiting
+    /network error/i, // Generic network errors
   ];
 
-  return errorPatterns.some(pattern => pattern.test(text));
+  return errorPatterns.some((pattern) => pattern.test(text));
 }
 
 export function formatOutbound(rawText: string): string {

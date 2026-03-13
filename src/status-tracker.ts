@@ -4,11 +4,12 @@
  */
 
 // Claude model pricing per million tokens (USD)
-const MODEL_PRICING: Array<{ prefix: string; input: number; output: number }> = [
-  { prefix: 'claude-opus',    input: 15,   output: 75   },
-  { prefix: 'claude-sonnet',  input: 3,    output: 15   },
-  { prefix: 'claude-haiku',   input: 0.80, output: 4    },
-];
+const MODEL_PRICING: Array<{ prefix: string; input: number; output: number }> =
+  [
+    { prefix: 'claude-opus', input: 15, output: 75 },
+    { prefix: 'claude-sonnet', input: 3, output: 15 },
+    { prefix: 'claude-haiku', input: 0.8, output: 4 },
+  ];
 
 function getPricing(model: string): { input: number; output: number } {
   const m = model.toLowerCase();

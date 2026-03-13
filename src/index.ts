@@ -45,7 +45,12 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound, isApiError } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  isApiError,
+} from './router.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,

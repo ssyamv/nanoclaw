@@ -18,9 +18,16 @@ groups/global/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
 
-# Secrets
+# Secrets — never commit credentials or private config
 *.keys.json
 .env
+.env.local
+.env.*.local
+*.secret
+*.token
+*webhook*.json
+*webhook*.env
+repo-tokens/
 
 # Temp files
 .tmp-*
@@ -34,5 +41,10 @@ groups/global/*
 
 # Skills system (local per-installation state)
 .nanoclaw/
+
+# Personal scripts & local automations (not for public repo)
+my-scripts/
+personal/
+local-scripts/
 
 agents-sdk-docs
