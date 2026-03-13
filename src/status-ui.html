@@ -432,6 +432,54 @@
   }
   .log-entry.new { animation: slide-in 0.15s ease-out forwards; }
 
+  /* ── TOKEN BAR ── */
+  .token-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 18px;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+
+  .token-group {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .token-label { color: var(--text-dim); letter-spacing: 0.5px; }
+  .token-sep   { color: var(--muted); }
+
+  .token-val {
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+
+  .token-model {
+    color: var(--text);
+    font-size: 11px;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .token-cost {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent2);
+    text-shadow: 0 0 10px rgba(0,255,157,0.3);
+    letter-spacing: 1px;
+  }
+
   /* uptime shimmer */
   @keyframes shimmer {
     0%   { background-position: -200% center; }
@@ -499,6 +547,31 @@
       <div class="card-number" id="reconnect-count">0</div>
       <div class="card-sub" style="margin-bottom:4px">total reconnects</div>
       <div class="card-sub">Last: <span id="last-reconnect" style="color:var(--text)">--</span></div>
+    </div>
+  </div>
+
+  <!-- Token Usage Bar -->
+  <div class="token-bar">
+    <div class="token-group">
+      <span class="token-label">本次运行</span>
+      <span class="token-sep">·</span>
+      <span class="token-label">输入</span>
+      <span class="token-val" id="tok-in">0</span>
+      <span class="token-label">输出</span>
+      <span class="token-val" id="tok-out">0</span>
+      <span class="token-label">共</span>
+      <span class="token-val" id="tok-total">0</span>
+      <span class="token-label">tokens</span>
+    </div>
+    <div class="token-group">
+      <span class="token-label">模型</span>
+      <span class="token-val token-model" id="tok-model">--</span>
+      <span class="token-sep">·</span>
+      <span class="token-label">API调用</span>
+      <span class="token-val" id="tok-calls">0</span>
+      <span class="token-sep">·</span>
+      <span class="token-label">预估费用</span>
+      <span class="token-cost" id="tok-cost">$0.0000</span>
     </div>
   </div>
 
@@ -590,6 +663,23 @@ function applyStatus(st) {
   // Reconnects
   document.getElementById('reconnect-count').textContent = st.reconnects ?? 0;
   document.getElementById('last-reconnect').textContent  = st.lastReconnect || '--';
+
+  // Token usage
+  if (st.sessionInputTokens != null) {
+    const fmtTok = (n) => n >= 1000000 ? (n/1000000).toFixed(2)+'M'
+                        : n >= 1000    ? (n/1000).toFixed(1)+'K'
+                        : String(n);
+    document.getElementById('tok-in').textContent    = fmtTok(st.sessionInputTokens);
+    document.getElementById('tok-out').textContent   = fmtTok(st.sessionOutputTokens);
+    document.getElementById('tok-total').textContent = fmtTok(st.sessionInputTokens + st.sessionOutputTokens);
+    document.getElementById('tok-calls').textContent = st.apiCallCount ?? 0;
+    document.getElementById('tok-cost').textContent  = '$' + (st.sessionCostUsd ?? 0).toFixed(4);
+    if (st.lastModel) {
+      // Shorten model name: claude-3-5-sonnet-20241022 → 3.5-sonnet
+      const short = st.lastModel.replace(/^claude-/i,'').replace(/-\d{8}$/,'');
+      document.getElementById('tok-model').textContent = short;
+    }
+  }
 }
 
 // ── Log rendering ──────────────────────────────────────────

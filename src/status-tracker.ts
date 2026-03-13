@@ -3,6 +3,21 @@
  * All modules update this state; the status server reads it.
  */
 
+// Claude model pricing per million tokens (USD)
+const MODEL_PRICING: Array<{ prefix: string; input: number; output: number }> = [
+  { prefix: 'claude-opus',    input: 15,   output: 75   },
+  { prefix: 'claude-sonnet',  input: 3,    output: 15   },
+  { prefix: 'claude-haiku',   input: 0.80, output: 4    },
+];
+
+function getPricing(model: string): { input: number; output: number } {
+  const m = model.toLowerCase();
+  for (const p of MODEL_PRICING) {
+    if (m.includes(p.prefix.replace('claude-', ''))) return p;
+  }
+  return { input: 3, output: 15 }; // default to Sonnet pricing
+}
+
 export interface StatusState {
   startTime: number;
   pid: number;
@@ -10,6 +25,12 @@ export interface StatusState {
   botName: string;
   reconnectCount: number;
   lastReconnectTime: string | null;
+  // Token usage (current session since last restart)
+  sessionInputTokens: number;
+  sessionOutputTokens: number;
+  sessionCostUsd: number;
+  lastModel: string;
+  apiCallCount: number;
 }
 
 const state: StatusState = {
@@ -19,6 +40,11 @@ const state: StatusState = {
   botName: '',
   reconnectCount: 0,
   lastReconnectTime: null,
+  sessionInputTokens: 0,
+  sessionOutputTokens: 0,
+  sessionCostUsd: 0,
+  lastModel: '',
+  apiCallCount: 0,
 };
 
 export function getStatus(): StatusState {
@@ -37,6 +63,25 @@ export function recordReconnect(): void {
   state.reconnectCount++;
   const now = new Date();
   state.lastReconnectTime = now.toTimeString().slice(0, 8);
+}
+
+export function recordTokenUsage(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): void {
+  const pricing = getPricing(model);
+  const cost =
+    (inputTokens / 1_000_000) * pricing.input +
+    (outputTokens / 1_000_000) * pricing.output;
+
+  state.sessionInputTokens += inputTokens;
+  state.sessionOutputTokens += outputTokens;
+  state.sessionCostUsd += cost;
+  state.apiCallCount++;
+  if (model) state.lastModel = model;
+
+  broadcastStatus();
 }
 
 // SSE client registry — status server registers listeners here
@@ -77,5 +122,10 @@ export function broadcastStatus(): void {
     reconnects: s.reconnectCount,
     lastReconnect: s.lastReconnectTime,
     pid: s.pid,
+    sessionInputTokens: s.sessionInputTokens,
+    sessionOutputTokens: s.sessionOutputTokens,
+    sessionCostUsd: s.sessionCostUsd,
+    lastModel: s.lastModel,
+    apiCallCount: s.apiCallCount,
   });
 }

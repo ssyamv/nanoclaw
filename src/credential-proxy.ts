@@ -13,9 +13,11 @@
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { recordTokenUsage } from './status-tracker.js';
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -43,6 +45,9 @@ export function startCredentialProxy(
   );
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
+
+  // Force all requests through local proxy
+  const proxyAgent = new HttpsProxyAgent('http://127.0.0.1:7897');
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -79,6 +84,19 @@ export function startCredentialProxy(
           }
         }
 
+        // Detect if this is a messages API call (we want to track token usage)
+        const isMessagesCall = (req.url ?? '').includes('/messages');
+        // Parse request body to detect streaming and model
+        let reqModel = '';
+        let isStreaming = false;
+        if (isMessagesCall && body.length > 0) {
+          try {
+            const reqJson = JSON.parse(body.toString('utf8'));
+            reqModel = String(reqJson.model || '');
+            isStreaming = !!reqJson.stream;
+          } catch { /* ignore parse errors */ }
+        }
+
         const upstream = makeRequest(
           {
             hostname: upstreamUrl.hostname,
@@ -86,10 +104,67 @@ export function startCredentialProxy(
             path: req.url,
             method: req.method,
             headers,
+            agent: proxyAgent,
           } as RequestOptions,
           (upRes) => {
             res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+
+            // Only intercept successful messages API calls for token tracking
+            if (!isMessagesCall || upRes.statusCode !== 200) {
+              upRes.pipe(res);
+              return;
+            }
+
+            let inputTokens = 0;
+            let outputTokens = 0;
+            let sseBuffer = '';
+
+            upRes.on('data', (chunk: Buffer) => {
+              // Forward to client immediately
+              res.write(chunk);
+
+              if (isStreaming) {
+                // Parse SSE stream for usage events
+                sseBuffer += chunk.toString('utf8');
+                const lines = sseBuffer.split('\n');
+                sseBuffer = lines.pop() ?? '';
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  const data = line.slice(6).trim();
+                  if (data === '[DONE]') continue;
+                  try {
+                    const evt = JSON.parse(data);
+                    if (evt.type === 'message_start' && evt.message?.usage) {
+                      inputTokens = evt.message.usage.input_tokens ?? 0;
+                      if (!reqModel && evt.message.model) reqModel = evt.message.model;
+                    } else if (evt.type === 'message_delta' && evt.usage) {
+                      outputTokens = evt.usage.output_tokens ?? 0;
+                    }
+                  } catch { /* ignore */ }
+                }
+              } else {
+                // Buffer full response for non-streaming
+                sseBuffer += chunk.toString('utf8');
+              }
+            });
+
+            upRes.on('end', () => {
+              res.end();
+              // Extract tokens from non-streaming response
+              if (!isStreaming && sseBuffer) {
+                try {
+                  const json = JSON.parse(sseBuffer);
+                  if (json.usage) {
+                    inputTokens  = json.usage.input_tokens  ?? 0;
+                    outputTokens = json.usage.output_tokens ?? 0;
+                  }
+                  if (!reqModel && json.model) reqModel = json.model;
+                } catch { /* ignore */ }
+              }
+              if (inputTokens > 0 || outputTokens > 0) {
+                recordTokenUsage(reqModel, inputTokens, outputTokens);
+              }
+            });
           },
         );
 

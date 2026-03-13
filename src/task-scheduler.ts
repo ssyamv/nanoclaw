@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { isApiError } from './router.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -185,8 +186,16 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Suppress API errors from being sent to channels
+          if (!isApiError(streamedOutput.result)) {
+            // Forward result to user (sendMessage handles formatting)
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          } else {
+            logger.warn(
+              { taskId: task.id, error: streamedOutput.result.slice(0, 100) },
+              'Suppressed API error from scheduled task output',
+            );
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {

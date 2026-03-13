@@ -45,7 +45,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, isApiError } from './router.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -219,8 +219,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+        // Suppress API errors from being sent to channels
+        if (!isApiError(text)) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        } else {
+          logger.warn(
+            { group: group.name, error: text.slice(0, 100) },
+            'Suppressed API error from agent output',
+          );
+        }
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();

@@ -128,6 +128,11 @@ export function startStatusServer(): void {
         reconnects: s.reconnectCount,
         lastReconnect: s.lastReconnectTime,
         pid: s.pid,
+        sessionInputTokens: s.sessionInputTokens,
+        sessionOutputTokens: s.sessionOutputTokens,
+        sessionCostUsd: s.sessionCostUsd,
+        lastModel: s.lastModel,
+        apiCallCount: s.apiCallCount,
       });
       res.writeHead(200, {
         'Content-Type': 'application/json',
