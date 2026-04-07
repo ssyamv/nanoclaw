@@ -262,6 +262,18 @@ async function buildContainerArgs(
     args.push('-e', `FEISHU_APP_SECRET=${feishuEnvVars.FEISHU_APP_SECRET}`);
   }
 
+  // Pass ArcFlow service credentials
+  const arcflowEnvVars = readEnvFile([
+    'GATEWAY_URL',
+    'DIFY_URL',
+    'DIFY_API_KEY',
+    'WIKIJS_URL',
+    'WIKIJS_API_KEY',
+  ]);
+  for (const [key, value] of Object.entries(arcflowEnvVars)) {
+    args.push('-e', `${key}=${value}`);
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {
