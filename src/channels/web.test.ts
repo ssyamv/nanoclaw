@@ -145,7 +145,7 @@ describe('WebChannel', () => {
           const { value, done } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
-          if (text.includes('"type":"message"')) return;
+          if (text.includes('"content":')) return;
         }
       };
       await readUntilMessage();

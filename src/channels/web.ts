@@ -30,14 +30,8 @@ export class WebChannel implements Channel {
     // CORS middleware
     app.use((_req: Request, res: Response, next) => {
       res.setHeader('Access-Control-Allow-Origin', this.corsOrigin);
-      res.setHeader(
-        'Access-Control-Allow-Methods',
-        'GET, POST, OPTIONS',
-      );
-      res.setHeader(
-        'Access-Control-Allow-Headers',
-        'Content-Type',
-      );
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       if (_req.method === 'OPTIONS') {
         res.status(204).end();
         return;
@@ -50,7 +44,9 @@ export class WebChannel implements Channel {
       const { client_id, message } = req.body || {};
 
       if (!client_id || !message) {
-        res.status(400).json({ ok: false, error: 'client_id and message are required' });
+        res
+          .status(400)
+          .json({ ok: false, error: 'client_id and message are required' });
         return;
       }
 
@@ -84,7 +80,9 @@ export class WebChannel implements Channel {
       const clientId = req.query.client_id as string;
 
       if (!clientId) {
-        res.status(400).json({ ok: false, error: 'client_id query param is required' });
+        res
+          .status(400)
+          .json({ ok: false, error: 'client_id query param is required' });
         return;
       }
 
@@ -95,7 +93,15 @@ export class WebChannel implements Channel {
       res.flushHeaders();
 
       // Send initial connected event
-      res.write(`event: connected\ndata: ${JSON.stringify({ type: 'connected', client_id: clientId })}\n\n`);
+      res.write(
+        `event: connected\ndata: ${JSON.stringify({ type: 'connected', client_id: clientId })}\n\n`,
+      );
+
+      // Close existing SSE connection for this client
+      const existing = this.sseClients.get(clientId);
+      if (existing && !existing.writableEnded) {
+        existing.end();
+      }
 
       // Store the SSE response for this client
       this.sseClients.set(clientId, res);
@@ -138,12 +144,13 @@ export class WebChannel implements Channel {
     const clientId = jid.replace(/^web:/, '');
     const sseRes = this.sseClients.get(clientId);
 
-    if (!sseRes) {
+    if (!sseRes || sseRes.writableEnded) {
       logger.warn({ jid }, 'Web: no SSE client found for jid');
       return;
     }
 
-    const data = JSON.stringify({ type: 'message', text });
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const data = JSON.stringify({ message_id: messageId, content: text, done: true });
     sseRes.write(`event: message\ndata: ${data}\n\n`);
     logger.info({ jid }, 'Web: message sent via SSE');
   }
@@ -152,9 +159,9 @@ export class WebChannel implements Channel {
     const clientId = jid.replace(/^web:/, '');
     const sseRes = this.sseClients.get(clientId);
 
-    if (!sseRes) return;
+    if (!sseRes || sseRes.writableEnded) return;
 
-    const data = JSON.stringify({ type: 'typing', is_typing: isTyping });
+    const data = JSON.stringify({ is_typing: isTyping });
     sseRes.write(`event: typing\ndata: ${data}\n\n`);
   }
 
@@ -172,14 +179,14 @@ export class WebChannel implements Channel {
 
   async disconnect(): Promise<void> {
     // Close all SSE connections
-    for (const [clientId, res] of this.sseClients) {
+    for (const [, res] of this.sseClients) {
       try {
-        res.end();
+        if (!res.writableEnded) res.end();
       } catch {
         // ignore
       }
-      this.sseClients.delete(clientId);
     }
+    this.sseClients.clear();
 
     if (this.httpServer) {
       await new Promise<void>((resolve) => {
