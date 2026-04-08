@@ -1,0 +1,197 @@
+#!/bin/bash
+# ArcFlow API Tool
+# Wraps Gateway, Dify RAG, and Wiki.js REST/GraphQL calls
+set -euo pipefail
+
+check_var() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        echo "Error: $name not set" >&2
+        exit 1
+    fi
+}
+
+# --- Workflow commands ---
+
+workflow_trigger() {
+    check_var GATEWAY_URL
+    local type="$1" issue_id="$2"
+    shift 2
+    local target_repos=("$@")
+
+    # Handle shorthand: code_gen_backend → code_gen + target_repos=["backend"]
+    case "$type" in
+        code_gen_backend)  type="code_gen"; target_repos=("backend") ;;
+        code_gen_vue3)     type="code_gen"; target_repos=("vue3") ;;
+        code_gen_flutter)  type="code_gen"; target_repos=("flutter") ;;
+        code_gen_android)  type="code_gen"; target_repos=("android") ;;
+    esac
+
+    local params="{}"
+    if [[ ${#target_repos[@]} -gt 0 ]]; then
+        local repos_json
+        repos_json=$(printf '%s\n' "${target_repos[@]}" | jq -R . | jq -s .)
+        params=$(jq -n --argjson repos "$repos_json" '{"target_repos": $repos}')
+    fi
+
+    local body
+    body=$(jq -n \
+        --arg wt "$type" \
+        --arg pid "$issue_id" \
+        --argjson params "$params" \
+        '{workflow_type: $wt, plane_issue_id: $pid, params: $params}')
+
+    local resp
+    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/workflow/trigger" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1) || {
+        echo "Error: Failed to trigger workflow" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp" | jq .
+}
+
+workflow_status() {
+    check_var GATEWAY_URL
+    local issue_id="$1"
+    # Note: Gateway /api/workflow/executions currently only supports
+    # workflow_type, status, limit filters — not plane_issue_id.
+    # We fetch recent executions and filter client-side.
+    local resp
+    resp=$(curl -sf "${GATEWAY_URL}/api/workflow/executions?limit=50" 2>&1) || {
+        echo "Error: Failed to query workflow status" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    # Filter by plane_issue_id client-side
+    echo "$resp" | jq --arg pid "$issue_id" '[.data[] | select(.plane_issue_id == $pid)]'
+}
+
+# --- RAG commands ---
+
+rag_query() {
+    check_var DIFY_URL
+    check_var DIFY_API_KEY
+    local question="$1"
+    local body
+    body=$(jq -n \
+        --arg q "$question" \
+        '{inputs: {}, query: $q, response_mode: "blocking", user: "nanoclaw"}')
+
+    local resp
+    resp=$(curl -sf -X POST "${DIFY_URL}/v1/chat-messages" \
+        -H "Authorization: Bearer ${DIFY_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1) || {
+        echo "Error: Dify RAG query failed" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp" | jq -r '.answer // .message // .'
+}
+
+# --- Wiki.js commands ---
+
+wiki_graphql() {
+    check_var WIKIJS_URL
+    check_var WIKIJS_API_KEY
+    local query="$1"
+    local body
+    body=$(jq -n --arg q "$query" '{query: $q}')
+
+    curl -sf -X POST "${WIKIJS_URL}/graphql" \
+        -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1 || {
+        echo "Error: Wiki.js query failed" >&2
+        exit 1
+    }
+}
+
+wiki_list() {
+    local resp
+    resp=$(wiki_graphql '{ pages { list(orderBy: UPDATED, limit: 20) { id title path updatedAt } } }')
+    echo "$resp" | jq -r '.data.pages.list[] | "\(.updatedAt)\t\(.path)\t\(.title)"'
+}
+
+wiki_search() {
+    local keyword="$1"
+    # Use jq to safely escape the keyword into the GraphQL query
+    local query
+    query=$(jq -n --arg kw "$keyword" '{ pages: { search: { query: $kw } } }' |
+        jq -r '"{ pages { search(query: \"\(.pages.search.query)\") { results { id title path description } } } }"' |
+        sed 's/"/\\"/g; s/^"//; s/"$//')
+    # Simpler approach: escape double quotes in input
+    local safe_keyword="${keyword//\"/\\\"}"
+    query="{ pages { search(query: \"${safe_keyword}\") { results { id title path description } } } }"
+    local resp
+    resp=$(wiki_graphql "$query")
+    echo "$resp" | jq -r '.data.pages.search.results[] | "\(.path)\t\(.title)\t\(.description // "")"'
+}
+
+wiki_read() {
+    local doc_path="$1"
+    local safe_path="${doc_path//\"/\\\"}"
+    local query="{ pages { single(path: \"${safe_path}\") { title content } } }"
+    local resp
+    resp=$(wiki_graphql "$query")
+    local title content
+    title=$(echo "$resp" | jq -r '.data.pages.single.title // "Unknown"')
+    content=$(echo "$resp" | jq -r '.data.pages.single.content // "Not found"')
+    echo "# $title"
+    echo ""
+    echo "$content"
+}
+
+# --- Usage ---
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  arcflow-api workflow trigger <type> <issue_id> [target_repos...]
+  arcflow-api workflow status <issue_id>
+  arcflow-api rag query "question"
+  arcflow-api wiki list
+  arcflow-api wiki search "keyword"
+  arcflow-api wiki read <path>
+
+Workflow types: prd_to_tech, tech_to_openapi, code_gen, bug_analysis
+Shorthand: code_gen_backend, code_gen_vue3, code_gen_flutter, code_gen_android
+EOF
+    exit 1
+}
+
+# --- Main ---
+
+[[ $# -lt 1 ]] && usage
+
+case "$1" in
+    workflow)
+        [[ $# -lt 3 ]] && usage
+        case "$2" in
+            trigger)
+                [[ $# -lt 4 ]] && usage
+                workflow_trigger "$3" "$4" "${@:5}"
+                ;;
+            status)
+                workflow_status "$3"
+                ;;
+            *) usage ;;
+        esac
+        ;;
+    rag)
+        [[ $# -lt 3 || "$2" != "query" ]] && usage
+        rag_query "$3"
+        ;;
+    wiki)
+        [[ $# -lt 2 ]] && usage
+        case "$2" in
+            list)    wiki_list ;;
+            search)  [[ $# -lt 3 ]] && usage; wiki_search "$3" ;;
+            read)    [[ $# -lt 3 ]] && usage; wiki_read "$3" ;;
+            *) usage ;;
+        esac
+        ;;
+    *) usage ;;
+esac

@@ -16,6 +16,7 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -251,6 +252,27 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass Feishu credentials for feishu-docs tool
+  const feishuEnvVars = readEnvFile(['FEISHU_APP_ID', 'FEISHU_APP_SECRET']);
+  if (feishuEnvVars.FEISHU_APP_ID) {
+    args.push('-e', `FEISHU_APP_ID=${feishuEnvVars.FEISHU_APP_ID}`);
+  }
+  if (feishuEnvVars.FEISHU_APP_SECRET) {
+    args.push('-e', `FEISHU_APP_SECRET=${feishuEnvVars.FEISHU_APP_SECRET}`);
+  }
+
+  // Pass ArcFlow service credentials
+  const arcflowEnvVars = readEnvFile([
+    'GATEWAY_URL',
+    'DIFY_URL',
+    'DIFY_API_KEY',
+    'WIKIJS_URL',
+    'WIKIJS_API_KEY',
+  ]);
+  for (const [key, value] of Object.entries(arcflowEnvVars)) {
+    args.push('-e', `${key}=${value}`);
+  }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.

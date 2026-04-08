@@ -1,0 +1,380 @@
+#!/bin/bash
+# Feishu Document Reader
+# Supports: docx, wiki, sheets (spreadsheet), bitable (多维表格), drive (file list)
+
+set -euo pipefail
+
+FEISHU_API_BASE="https://open.xfchat.iflytek.com"
+
+check_credentials() {
+    if [[ -z "${FEISHU_APP_ID:-}" ]] || [[ -z "${FEISHU_APP_SECRET:-}" ]]; then
+        echo "Error: FEISHU_APP_ID or FEISHU_APP_SECRET not set" >&2
+        exit 1
+    fi
+}
+
+get_access_token() {
+    local response
+    response=$(curl -s -X POST "${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal" \
+        -H "Content-Type: application/json" \
+        -H "User-Agent: Mozilla/5.0" \
+        -d "{\"app_id\":\"${FEISHU_APP_ID}\",\"app_secret\":\"${FEISHU_APP_SECRET}\"}")
+    local code
+    code=$(echo "$response" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error: Failed to get access token: $response" >&2
+        exit 1
+    fi
+    echo "$response" | jq -r '.tenant_access_token'
+}
+
+# Extract doc ID and type from URL or raw ID
+# Returns: "id type"
+extract_id() {
+    local input="$1"
+    if [[ "$input" =~ https?:// ]]; then
+        if [[ "$input" =~ /sheets/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]} sheets"
+        elif [[ "$input" =~ /base/([a-zA-Z0-9_-]+) ]] || [[ "$input" =~ /bitable/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]} bitable"
+        elif [[ "$input" =~ /wiki/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]} wiki"
+        elif [[ "$input" =~ /docx?/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]} docx"
+        elif [[ "$input" =~ /drive/folder/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]} folder"
+        else
+            echo "Error: Cannot determine document type from URL: $input" >&2
+            exit 1
+        fi
+    else
+        if [[ "$input" =~ ^sht ]]; then
+            echo "$input sheets"
+        elif [[ "$input" =~ ^bascn ]] || [[ "$input" =~ ^basc ]]; then
+            echo "$input bitable"
+        else
+            echo "$input docx"
+        fi
+    fi
+}
+
+read_docx() {
+    local doc_id="$1" token="$2"
+    local response
+    response=$(curl -s "${FEISHU_API_BASE}/open-apis/docx/v1/documents/${doc_id}/raw_content" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local code
+    code=$(echo "$response" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error reading docx: $(echo "$response" | jq -r '.msg')" >&2
+        exit 1
+    fi
+    echo "$response" | jq -r '.data.content // ""'
+}
+
+read_wiki() {
+    local node_token="$1" token="$2"
+    local node_resp
+    node_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/wiki/v2/spaces/get_node?token=${node_token}" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local code
+    code=$(echo "$node_resp" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error reading wiki node: $(echo "$node_resp" | jq -r '.msg')" >&2
+        exit 1
+    fi
+    local obj_token obj_type title
+    obj_token=$(echo "$node_resp" | jq -r '.data.node.obj_token')
+    obj_type=$(echo "$node_resp" | jq -r '.data.node.obj_type')
+    title=$(echo "$node_resp" | jq -r '.data.node.title')
+    echo "# $title"
+    echo ""
+    if [[ "$obj_type" == "docx" ]]; then
+        read_docx "$obj_token" "$token"
+    else
+        echo "(obj_type: $obj_type, obj_token: $obj_token)"
+    fi
+}
+
+list_wiki_nodes() {
+    local space_id="$1" parent_token="$2" token="$3" depth="$4"
+    local page_token=""
+    while true; do
+        local url="${FEISHU_API_BASE}/open-apis/wiki/v2/spaces/${space_id}/nodes?parent_node_token=${parent_token}&page_size=50"
+        [[ -n "$page_token" ]] && url="${url}&page_token=${page_token}"
+        local resp
+        resp=$(curl -s "$url" -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+        local code
+        code=$(echo "$resp" | jq -r '.code // 1')
+        if [[ "$code" != "0" ]]; then
+            echo "  (permission denied for node $parent_token)" >&2
+            return
+        fi
+        local items
+        items=$(echo "$resp" | jq -c '.data.items[]?' 2>/dev/null || true)
+        while IFS= read -r item; do
+            [[ -z "$item" ]] && continue
+            local ntitle ntoken ntype
+            ntitle=$(echo "$item" | jq -r '.title')
+            ntoken=$(echo "$item" | jq -r '.node_token')
+            ntype=$(echo "$item" | jq -r '.obj_type')
+            local indent
+            indent=$(printf '%*s' $((depth * 2)) '')
+            echo "${indent}- [${ntype}] ${ntitle} (${ntoken})"
+            list_wiki_nodes "$space_id" "$ntoken" "$token" $((depth + 1))
+        done <<< "$items"
+        local has_more
+        has_more=$(echo "$resp" | jq -r '.data.has_more // false')
+        [[ "$has_more" != "true" ]] && break
+        page_token=$(echo "$resp" | jq -r '.data.page_token // ""')
+        [[ -z "$page_token" ]] && break
+    done
+}
+
+list_wiki() {
+    local node_token="$1" token="$2"
+    local node_resp
+    node_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/wiki/v2/spaces/get_node?token=${node_token}" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local space_id title
+    space_id=$(echo "$node_resp" | jq -r '.data.node.space_id')
+    title=$(echo "$node_resp" | jq -r '.data.node.title')
+    echo "Knowledge base: $title (space: $space_id)"
+    echo ""
+    list_wiki_nodes "$space_id" "$node_token" "$token" 0
+}
+
+read_wiki_nodes_content() {
+    local space_id="$1" parent_token="$2" token="$3"
+    local page_token=""
+    while true; do
+        local url="${FEISHU_API_BASE}/open-apis/wiki/v2/spaces/${space_id}/nodes?parent_node_token=${parent_token}&page_size=50"
+        [[ -n "$page_token" ]] && url="${url}&page_token=${page_token}"
+        local resp
+        resp=$(curl -s "$url" -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+        local code
+        code=$(echo "$resp" | jq -r '.code // 1')
+        [[ "$code" != "0" ]] && return
+        local items
+        items=$(echo "$resp" | jq -c '.data.items[]?' 2>/dev/null || true)
+        while IFS= read -r item; do
+            [[ -z "$item" ]] && continue
+            local ntitle ntoken ntype
+            ntitle=$(echo "$item" | jq -r '.title')
+            ntoken=$(echo "$item" | jq -r '.node_token')
+            ntype=$(echo "$item" | jq -r '.obj_type')
+            echo ""
+            echo "## $ntitle"
+            echo ""
+            if [[ "$ntype" == "docx" ]]; then
+                read_wiki "$ntoken" "$token"
+            else
+                echo "(type: $ntype)"
+            fi
+            echo ""
+            echo "---"
+            read_wiki_nodes_content "$space_id" "$ntoken" "$token"
+        done <<< "$items"
+        local has_more
+        has_more=$(echo "$resp" | jq -r '.data.has_more // false')
+        [[ "$has_more" != "true" ]] && break
+        page_token=$(echo "$resp" | jq -r '.data.page_token // ""')
+        [[ -z "$page_token" ]] && break
+    done
+}
+
+read_wiki_all() {
+    local node_token="$1" token="$2"
+    local node_resp
+    node_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/wiki/v2/spaces/get_node?token=${node_token}" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local space_id title
+    space_id=$(echo "$node_resp" | jq -r '.data.node.space_id')
+    title=$(echo "$node_resp" | jq -r '.data.node.title')
+    echo "# Knowledge base: $title"
+    echo ""
+    read_wiki "$node_token" "$token"
+    echo ""
+    echo "---"
+    read_wiki_nodes_content "$space_id" "$node_token" "$token"
+}
+
+read_sheets() {
+    local spreadsheet_token="$1" token="$2"
+    local sheets_resp
+    sheets_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/sheets/v3/spreadsheets/${spreadsheet_token}/sheets/query" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local code
+    code=$(echo "$sheets_resp" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error reading spreadsheet: $(echo "$sheets_resp" | jq -r '.msg')" >&2
+        exit 1
+    fi
+    local sheets
+    sheets=$(echo "$sheets_resp" | jq -c '.data.sheets[]?')
+    while IFS= read -r sheet; do
+        [[ -z "$sheet" ]] && continue
+        local sid stitle
+        sid=$(echo "$sheet" | jq -r '.sheet_id')
+        stitle=$(echo "$sheet" | jq -r '.title')
+        echo "## Sheet: $stitle (id: $sid)"
+        echo ""
+        local range="${sid}!A1:ZZ1000"
+        local val_resp
+        val_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/sheets/v2/spreadsheets/${spreadsheet_token}/values/${range}" \
+            -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+        local vcode
+        vcode=$(echo "$val_resp" | jq -r '.code // 1')
+        if [[ "$vcode" == "0" ]]; then
+            echo "$val_resp" | jq -r '
+                .data.valueRange.values[]? |
+                map(if . == null then "" else (. | tostring) end) |
+                join("\t")
+            '
+        else
+            echo "(Error reading sheet: $(echo "$val_resp" | jq -r '.msg'))"
+        fi
+        echo ""
+    done <<< "$sheets"
+}
+
+read_bitable() {
+    local app_token="$1" token="$2"
+    local tables_resp
+    tables_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${app_token}/tables?page_size=100" \
+        -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local code
+    code=$(echo "$tables_resp" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error reading bitable: $(echo "$tables_resp" | jq -r '.msg')" >&2
+        exit 1
+    fi
+    local tables
+    tables=$(echo "$tables_resp" | jq -c '.data.items[]?')
+    while IFS= read -r table; do
+        [[ -z "$table" ]] && continue
+        local tid tname
+        tid=$(echo "$table" | jq -r '.table_id')
+        tname=$(echo "$table" | jq -r '.name')
+        echo "## Table: $tname (id: $tid)"
+        echo ""
+        local fields_resp
+        fields_resp=$(curl -s "${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${app_token}/tables/${tid}/fields?page_size=100" \
+            -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+        echo "$fields_resp" | jq -r '[.data.items[]?.field_name] | join("\t")' 2>/dev/null || true
+        local page_token=""
+        while true; do
+            local url="${FEISHU_API_BASE}/open-apis/bitable/v1/apps/${app_token}/tables/${tid}/records?page_size=100"
+            [[ -n "$page_token" ]] && url="${url}&page_token=${page_token}"
+            local rec_resp
+            rec_resp=$(curl -s "$url" -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+            echo "$rec_resp" | jq -r '
+                .data.items[]?.fields |
+                to_entries |
+                map(.value |
+                    if type == "array" then map(if type == "object" then (.text // .name // tostring) else tostring end) | join(", ")
+                    elif type == "object" then (.text // .value // tostring)
+                    else tostring end) |
+                join("\t")
+            ' 2>/dev/null || true
+            local has_more
+            has_more=$(echo "$rec_resp" | jq -r '.data.has_more // false')
+            [[ "$has_more" != "true" ]] && break
+            page_token=$(echo "$rec_resp" | jq -r '.data.page_token // ""')
+            [[ -z "$page_token" ]] && break
+        done
+        echo ""
+    done <<< "$tables"
+}
+
+list_drive() {
+    local folder_token="${1:-}" token="$2"
+    local url="${FEISHU_API_BASE}/open-apis/drive/v1/files?page_size=50"
+    [[ -n "$folder_token" ]] && url="${url}&folder_token=${folder_token}"
+    local resp
+    resp=$(curl -s "$url" -H "Authorization: Bearer ${token}" -H "User-Agent: Mozilla/5.0")
+    local code
+    code=$(echo "$resp" | jq -r '.code // 1')
+    if [[ "$code" != "0" ]]; then
+        echo "Error listing drive: $(echo "$resp" | jq -r '.msg')" >&2
+        exit 1
+    fi
+    echo "$resp" | jq -r '.data.files[]? | "\(.type)\t\(.name)\t\(.token)"'
+}
+
+usage() {
+    cat >&2 <<EOF
+Usage:
+  feishu-docs read <url_or_id>          Read a document (docx, wiki, sheet, bitable)
+  feishu-docs read-all <wiki_url>       Read ALL documents in a wiki knowledge base
+  feishu-docs list <wiki_url>           List all nodes in a wiki knowledge base
+  feishu-docs list-drive [folder_token] List files in cloud drive
+
+Supported URL types:
+  https://*.xfchat.iflytek.com/wiki/TOKEN     Wiki page
+  https://*.xfchat.iflytek.com/docx/TOKEN     Document
+  https://*.xfchat.iflytek.com/sheets/TOKEN   Spreadsheet
+  https://*.xfchat.iflytek.com/base/TOKEN     Bitable (多维表格)
+EOF
+    exit 1
+}
+
+main() {
+    [[ $# -lt 1 ]] && usage
+
+    local command="$1"
+    local input="${2:-}"
+
+    check_credentials
+    local token
+    token=$(get_access_token)
+
+    case "$command" in
+        read)
+            [[ -z "$input" ]] && usage
+            local id_info
+            id_info=$(extract_id "$input")
+            local doc_id doc_type
+            doc_id=$(echo "$id_info" | cut -d' ' -f1)
+            doc_type=$(echo "$id_info" | cut -d' ' -f2)
+            echo "Reading feishu $doc_type: $doc_id" >&2
+            case "$doc_type" in
+                docx)    read_docx "$doc_id" "$token" ;;
+                wiki)    read_wiki "$doc_id" "$token" ;;
+                sheets)  read_sheets "$doc_id" "$token" ;;
+                bitable) read_bitable "$doc_id" "$token" ;;
+                folder)  list_drive "$doc_id" "$token" ;;
+                *) echo "Error: Unknown type $doc_type" >&2; exit 1 ;;
+            esac
+            ;;
+        read-all)
+            [[ -z "$input" ]] && usage
+            local id_info
+            id_info=$(extract_id "$input")
+            local doc_id doc_type
+            doc_id=$(echo "$id_info" | cut -d' ' -f1)
+            doc_type=$(echo "$id_info" | cut -d' ' -f2)
+            [[ "$doc_type" != "wiki" ]] && { echo "Error: read-all only supports wiki URLs" >&2; exit 1; }
+            echo "Reading all wiki documents from: $doc_id" >&2
+            read_wiki_all "$doc_id" "$token"
+            ;;
+        list)
+            [[ -z "$input" ]] && usage
+            local id_info
+            id_info=$(extract_id "$input")
+            local doc_id doc_type
+            doc_id=$(echo "$id_info" | cut -d' ' -f1)
+            doc_type=$(echo "$id_info" | cut -d' ' -f2)
+            [[ "$doc_type" != "wiki" ]] && { echo "Error: list only supports wiki URLs" >&2; exit 1; }
+            list_wiki "$doc_id" "$token"
+            ;;
+        list-drive)
+            list_drive "${input:-}" "$token"
+            ;;
+        *)
+            usage
+            ;;
+    esac
+}
+
+main "$@"

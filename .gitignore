@@ -13,10 +13,13 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/arcflow-main/
 groups/main/*
 groups/global/*
+groups/arcflow-main/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/arcflow-main/CLAUDE.md
 
 # Secrets
 *.keys.json

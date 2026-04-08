@@ -10,3 +10,9 @@
 // telegram
 
 // whatsapp
+
+// feishu
+import './feishu.js';
+
+// web
+import './web.js';
