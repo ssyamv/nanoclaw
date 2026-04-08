@@ -150,7 +150,11 @@ export class WebChannel implements Channel {
     }
 
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const data = JSON.stringify({ message_id: messageId, content: text, done: true });
+    const data = JSON.stringify({
+      message_id: messageId,
+      content: text,
+      done: true,
+    });
     sseRes.write(`event: message\ndata: ${data}\n\n`);
     logger.info({ jid }, 'Web: message sent via SSE');
   }

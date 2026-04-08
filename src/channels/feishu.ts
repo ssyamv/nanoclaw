@@ -29,7 +29,12 @@ export class FeishuChannel implements Channel {
   private lastMessageId: Map<string, string> = new Map();
   private botOpenId: string | null = null;
 
-  constructor(appId: string, appSecret: string, port: number, opts: ChannelOpts) {
+  constructor(
+    appId: string,
+    appSecret: string,
+    port: number,
+    opts: ChannelOpts,
+  ) {
     this.appId = appId;
     this.appSecret = appSecret;
     this.port = port;
@@ -46,7 +51,10 @@ export class FeishuChannel implements Channel {
       });
       if (res.data.code === 0) {
         this.botOpenId = res.data.bot?.open_id || null;
-        logger.info({ botOpenId: this.botOpenId }, 'Feishu: bot open_id fetched');
+        logger.info(
+          { botOpenId: this.botOpenId },
+          'Feishu: bot open_id fetched',
+        );
         return this.botOpenId;
       }
     } catch (err) {
@@ -62,7 +70,7 @@ export class FeishuChannel implements Channel {
     try {
       const res = await axios.post(
         `${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`,
-        { app_id: this.appId, app_secret: this.appSecret }
+        { app_id: this.appId, app_secret: this.appSecret },
       );
       if (res.data.code === 0) {
         this.accessToken = res.data.tenant_access_token;
@@ -86,7 +94,10 @@ export class FeishuChannel implements Channel {
     app.post('/webhook/event', async (req: Request, res: Response) => {
       const body = req.body;
 
-      logger.info({ body: JSON.stringify(body).slice(0, 200) }, 'Feishu: incoming request');
+      logger.info(
+        { body: JSON.stringify(body).slice(0, 200) },
+        'Feishu: incoming request',
+      );
 
       if (body.type === 'url_verification' || body.challenge) {
         logger.info('Feishu: URL verification request');
@@ -100,7 +111,9 @@ export class FeishuChannel implements Channel {
 
       const isMessageEvent =
         (isV2 && eventType === 'im.message.receive_v1') ||
-        (!isV2 && type === 'event_callback' && eventType === 'im.message.receive_v1');
+        (!isV2 &&
+          type === 'event_callback' &&
+          eventType === 'im.message.receive_v1');
 
       if (isMessageEvent) {
         res.json({ code: 0 });
@@ -121,12 +134,19 @@ export class FeishuChannel implements Channel {
           if (isGroupChat) {
             const botId = await this.getBotOpenId();
             const mentions: any[] = message.mentions || [];
-            logger.info({ botId, mentions: JSON.stringify(mentions) }, 'Feishu: group message mentions');
+            logger.info(
+              { botId, mentions: JSON.stringify(mentions) },
+              'Feishu: group message mentions',
+            );
             if (!botId) {
-              logger.warn('Feishu: cannot determine bot open_id, ignoring group message');
+              logger.warn(
+                'Feishu: cannot determine bot open_id, ignoring group message',
+              );
               return;
             }
-            const botMentioned = mentions.some((m: any) => m.id?.open_id === botId);
+            const botMentioned = mentions.some(
+              (m: any) => m.id?.open_id === botId,
+            );
             if (!botMentioned) return;
           }
 
@@ -143,7 +163,13 @@ export class FeishuChannel implements Channel {
           logger.info({ openId, chatJid, text }, 'Feishu: message received');
 
           const chatName = chatId ? `飞书群聊-${chatId}` : `飞书私聊-${openId}`;
-          this.opts.onChatMetadata(chatJid, timestamp, chatName, 'feishu', !!chatId);
+          this.opts.onChatMetadata(
+            chatJid,
+            timestamp,
+            chatName,
+            'feishu',
+            !!chatId,
+          );
 
           this.opts.onMessage(chatJid, {
             id: message.message_id || `feishu-${Date.now()}`,
@@ -153,7 +179,6 @@ export class FeishuChannel implements Channel {
             content: text,
             timestamp,
           });
-
         } catch (err) {
           logger.error({ err }, 'Feishu: error handling message event');
         }
@@ -183,9 +208,7 @@ export class FeishuChannel implements Channel {
     return text
       .replace(/\*\*(.+?)\*\*/g, '$1')
       .replace(/\*(.+?)\*/g, '$1')
-      .replace(/`{3}[\s\S]*?`{3}/g, (m) =>
-        m.replace(/`{3}\w*\n?/g, '').trim()
-      )
+      .replace(/`{3}[\s\S]*?`{3}/g, (m) => m.replace(/`{3}\w*\n?/g, '').trim())
       .replace(/`(.+?)`/g, '$1')
       .replace(/^#{1,6}\s+/gm, '')
       .replace(/^\s*[-*+]\s+/gm, '• ')
@@ -231,7 +254,7 @@ export class FeishuChannel implements Channel {
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
-            }
+            },
           );
         } else {
           res = await axios.post(
@@ -247,13 +270,16 @@ export class FeishuChannel implements Channel {
                 'Content-Type': 'application/json',
               },
               params: { receive_id_type: receiveIdType },
-            }
+            },
           );
         }
         if (res.data.code === 0) {
           logger.info({ jid }, 'Feishu: message sent');
         } else {
-          logger.error({ jid, data: res.data }, 'Feishu: failed to send message');
+          logger.error(
+            { jid, data: res.data },
+            'Feishu: failed to send message',
+          );
         }
       } catch (err) {
         logger.error({ jid, err }, 'Feishu: error sending message');
@@ -286,8 +312,12 @@ registerChannel('feishu', (opts: ChannelOpts) => {
     'FEISHU_WEBHOOK_PORT',
   ]);
   const appId = process.env.FEISHU_APP_ID || envVars.FEISHU_APP_ID || '';
-  const appSecret = process.env.FEISHU_APP_SECRET || envVars.FEISHU_APP_SECRET || '';
-  const port = parseInt(process.env.FEISHU_WEBHOOK_PORT || envVars.FEISHU_WEBHOOK_PORT || '3000', 10);
+  const appSecret =
+    process.env.FEISHU_APP_SECRET || envVars.FEISHU_APP_SECRET || '';
+  const port = parseInt(
+    process.env.FEISHU_WEBHOOK_PORT || envVars.FEISHU_WEBHOOK_PORT || '3000',
+    10,
+  );
 
   if (!appId || !appSecret) {
     logger.warn('Feishu: FEISHU_APP_ID or FEISHU_APP_SECRET not set, skipping');
