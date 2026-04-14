@@ -78,7 +78,35 @@ arcflow-knowledge kb_read_doc prd/login-flow.md
 - 读取仓库中的文件内容
 - 仅做查询，不执行写操作
 
-### 7. 飞书文档 — 已内置
+### 7. 方法论 skills — 自动按关键词加载
+
+**Superpowers 原版（vendored）**：
+
+| Skill | 关键词触发 |
+|-------|-----------|
+| `brainstorming` | 用户提"我想做 X / 考虑一个 Y"且未澄清需求时 |
+| `writing-plans` | 有 spec，要拆执行计划时 |
+| `executing-plans` | 手上有计划要开干时 |
+| `test-driven-development` | 写新功能或修 bug（默认路径） |
+| `systematic-debugging` | 用户说"出 bug / 报错 / 失败了" |
+| `verification-before-completion` | 任何"我做完了 / 应该可以了"之前 |
+| `requesting-code-review` | Agent 自己改完代码要请 review |
+| `receiving-code-review` | 用户/reviewer 给了反馈要吸收 |
+
+**ArcFlow 专属**：
+
+| Skill | 何时用 |
+|-------|--------|
+| `arcflow-prd-authoring` | 写 PRD / 推进草稿时（`arcflow-requirement create_draft` 后） |
+| `arcflow-tech-design` | PRD approved → 出技术方案 |
+| `arcflow-openapi-gen` | tech-design 完成 → 出 OpenAPI |
+| `arcflow-bug-analysis` | 拿到 CI 失败日志或 ibuild webhook payload |
+| `arcflow-release-checklist` | 用户说"准备发版 / 上线前检查" |
+| `code-review` | 审 PR / MR / diff |
+
+遇到命中的关键词**必须**先加载对应 skill（读 `/app/skills/<name>/SKILL.md`），再按其指引执行——不要凭记忆替代。
+
+### 8. 飞书文档 — 已内置
 
 - 通过 feishu-docs 技能读取飞书文档、Wiki、表格、多维表格
 - 消息收发由 NanoClaw FeishuChannel 自动处理
