@@ -341,6 +341,8 @@ export class WebChannel implements Channel {
     const auth = (req as Request & { auth?: AuthContext }).auth;
     if (auth) state.authContext = auth;
 
+    this.ensureGroupRegistered(`web:${client_id}`);
+
     if (state.inflightMessageId) {
       res.status(429).json({
         ok: false,
@@ -363,6 +365,10 @@ export class WebChannel implements Channel {
       false,
     );
 
+    logger.debug(
+      { chatJid, messageId, contentLen: content.length },
+      'Web: dispatching onMessage',
+    );
     this.opts.onMessage(chatJid, {
       id: messageId,
       chat_jid: chatJid,
@@ -485,6 +491,44 @@ export class WebChannel implements Channel {
   }
 
   // ---- internal: helpers --------------------------------------------------
+
+  /**
+   * Auto-register web jids into the router's registeredGroups on first use.
+   * Web client_ids are dynamic (one per browser/session), so they can't be
+   * statically registered like Feishu chats. Without this, the message loop
+   * skips all web jids and POSTed messages are stored-but-never-dispatched
+   * (the "POST ok but Agent silent" bug).
+   *
+   * All web clients share a single `web` group folder — per-jid separation
+   * is already enforced at the DB layer (chat_jid column).
+   */
+  private ensureGroupRegistered(jid: string): void {
+    const groups = this.opts.registeredGroups();
+    if (groups[jid]) return;
+    if (!this.opts.registerGroup) {
+      logger.warn(
+        { jid },
+        'Web: registerGroup not provided by host — jid will NOT be dispatched to Agent',
+      );
+      return;
+    }
+    try {
+      this.opts.registerGroup(jid, {
+        name: `Web-${jid.replace(/^web:/, '')}`,
+        folder: 'web',
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: new Date().toISOString(),
+        requiresTrigger: false,
+        isMain: false,
+      });
+      logger.info({ jid }, 'Web: auto-registered group on first message');
+    } catch (err) {
+      logger.error(
+        { jid, err: (err as Error).message },
+        'Web: failed to auto-register group',
+      );
+    }
+  }
 
   private ensureClient(clientId: string): ClientState {
     let s = this.clients.get(clientId);
