@@ -9,6 +9,13 @@ export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  /**
+   * Register a group on demand (used by channels whose jids are created
+   * dynamically at runtime — e.g. WebChannel's per-client_id jids).
+   * Optional: channels with statically-registered jids (feishu, whatsapp)
+   * don't need this.
+   */
+  registerGroup?: (jid: string, group: RegisteredGroup) => void;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

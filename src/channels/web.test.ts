@@ -108,6 +108,52 @@ describe('WebChannel (no auth)', () => {
       );
     });
 
+    it('POST /api/chat auto-registers the web jid as a group (only once)', async () => {
+      const registerGroup = vi.fn();
+      await channel.disconnect();
+      opts = makeOpts({ registerGroup, registeredGroups: () => ({}) });
+      channel = new WebChannel(opts, {
+        port: 0,
+        corsOrigin: '*',
+        jwtSecret: null,
+        gatewayBaseUrl: null,
+      });
+      await channel.connect();
+      const url = `http://127.0.0.1:${channel.getPort()}`;
+
+      const post = () =>
+        fetch(`${url}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: 'autoReg', message: 'hi' }),
+        });
+      await post();
+      expect(registerGroup).toHaveBeenCalledWith(
+        'web:autoReg',
+        expect.objectContaining({
+          folder: 'web',
+          requiresTrigger: false,
+          isMain: false,
+        }),
+      );
+
+      // Simulate host having stored the registration — second POST is a no-op.
+      opts.registeredGroups = () => ({
+        'web:autoReg': {
+          name: 'Web-autoReg',
+          folder: 'web',
+          trigger: '@Andy',
+          added_at: '2026-04-14T00:00:00Z',
+          requiresTrigger: false,
+          isMain: false,
+        },
+      });
+      // Clear busy state by letting the first turn "finish"
+      channel.emitEvent('web:autoReg', 'done', {});
+      await post();
+      expect(registerGroup).toHaveBeenCalledTimes(1);
+    });
+
     it('POST /api/chat returns 400 when fields missing', async () => {
       const r1 = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
