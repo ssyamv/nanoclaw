@@ -5,6 +5,11 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import {
+  writeCredentialsFile,
+  cleanupCredentialsFile,
+} from './auth/credentials-file.js';
+import type { ClientAuth } from './auth/client-auth-store.js';
 
 import {
   CONTAINER_IMAGE,
@@ -44,6 +49,8 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  /** ArcFlow user credentials — mounted as /run/arcflow/credentials.json */
+  auth?: ClientAuth;
 }
 
 export interface ContainerOutput {
@@ -365,6 +372,30 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  // Mount ArcFlow credentials file if auth is provided
+  let credFilePath: string | undefined;
+  if (input.auth) {
+    const gatewayUrl =
+      process.env.ARCFLOW_GATEWAY_URL ?? 'http://localhost:3001';
+    credFilePath = await writeCredentialsFile({
+      token: input.auth.token,
+      userId: input.auth.userId,
+      workspaceId: input.auth.workspaceId,
+      displayName: input.auth.displayName,
+      gatewayUrl,
+    });
+    containerArgs.splice(
+      containerArgs.indexOf(CONTAINER_IMAGE),
+      0,
+      '-v',
+      `${credFilePath}:/run/arcflow/credentials.json:ro`,
+    );
+    logger.info(
+      { containerName, credFilePath },
+      'ArcFlow credentials mounted into container',
+    );
+  }
+
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -493,6 +524,10 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      // Clean up credentials file on container exit (best effort)
+      if (credFilePath) {
+        void cleanupCredentialsFile(credFilePath);
+      }
       const duration = Date.now() - startTime;
 
       if (timedOut) {

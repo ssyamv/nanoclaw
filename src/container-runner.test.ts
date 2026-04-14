@@ -226,4 +226,44 @@ describe('container-runner timeout behavior', () => {
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
   });
+
+  it('mounts credentials file when auth is provided', async () => {
+    const { spawn } = await import('child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+
+    const inputWithAuth = {
+      ...testInput,
+      auth: {
+        userId: 7,
+        workspaceId: 3,
+        displayName: 'U',
+        token: 'jwt.test',
+        expiresAt: 9e9,
+      },
+    };
+
+    // runContainerAgent is async due to writeCredentialsFile; use real timers
+    // for the fs ops and fake timers only for the timeout logic.
+    vi.useRealTimers();
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      inputWithAuth,
+      () => {},
+    );
+
+    // Wait for writeCredentialsFile + spawn to complete (real async)
+    await new Promise((r) => setTimeout(r, 50));
+    fakeProc.emit('close', 0);
+    await resultPromise;
+
+    expect(spawnMock).toHaveBeenCalled();
+    const dockerArgs: string[] = spawnMock.mock.calls[0][1] as string[];
+    // Check that a credentials file is mounted to /run/arcflow/credentials.json
+    const mountIdx = dockerArgs.findIndex(
+      (a) => typeof a === 'string' && a.includes('/run/arcflow/credentials.json:ro'),
+    );
+    expect(mountIdx).toBeGreaterThan(-1);
+  });
 });
