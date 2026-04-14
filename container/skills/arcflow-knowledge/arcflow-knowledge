@@ -1,0 +1,83 @@
+#!/bin/bash
+# ArcFlow Knowledge Tool
+set -euo pipefail
+
+check_var() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        echo "Error: $name not set" >&2
+        exit 1
+    fi
+}
+
+gw_call() {
+    check_var GATEWAY_URL
+    check_var ARCFLOW_JWT
+    local method="$1" path="$2" body="${3:-}"
+    local url="${GATEWAY_URL}${path}"
+    local args=(-sS -X "$method" -H "Authorization: Bearer ${ARCFLOW_JWT}")
+    if [[ -n "$body" ]]; then
+        args+=(-H "Content-Type: application/json" -d "$body")
+    fi
+    local resp http_code
+    resp=$(curl "${args[@]}" -w $'\n%{http_code}' "$url")
+    http_code="${resp##*$'\n'}"
+    local payload="${resp%$'\n'*}"
+    if [[ "$http_code" -ge 400 ]]; then
+        echo "Error: Gateway $method $path returned $http_code" >&2
+        echo "$payload" >&2
+        exit 1
+    fi
+    echo "$payload"
+}
+
+# URL-encode via jq (@uri) to handle CJK / spaces safely.
+urlencode() {
+    jq -rn --arg s "$1" '$s|@uri'
+}
+
+cmd_kb_search_prd() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-knowledge kb_search_prd <keyword> [--type prd|tech-design|api|arch|ops|market]" >&2; exit 1; }
+    local keyword="$1"; shift
+    local type_prefix=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type) type_prefix="$2"; shift 2 ;;
+            *) echo "Unknown arg: $1" >&2; exit 1 ;;
+        esac
+    done
+    local qs="q=$(urlencode "$keyword")"
+    local resp
+    resp=$(gw_call GET "/api/docs/search?${qs}")
+    if [[ -n "$type_prefix" ]]; then
+        jq --arg p "$type_prefix" '{data: (.data // [] | map(select((.path // "") | startswith($p + "/"))))}' <<<"$resp"
+    else
+        echo "$resp" | jq .
+    fi
+}
+
+cmd_kb_read_doc() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-knowledge kb_read_doc <path>" >&2; exit 1; }
+    local path="$1"
+    local qs="path=$(urlencode "$path")"
+    gw_call GET "/api/docs/file?${qs}" | jq .
+}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  arcflow-knowledge kb_search_prd <keyword> [--type prd|tech-design|api|arch|ops|market]
+  arcflow-knowledge kb_read_doc <path>
+
+Env: GATEWAY_URL, ARCFLOW_JWT
+EOF
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+sub="$1"; shift
+case "$sub" in
+    kb_search_prd) cmd_kb_search_prd "$@" ;;
+    kb_read_doc)   cmd_kb_read_doc "$@" ;;
+    *) usage ;;
+esac

@@ -274,6 +274,16 @@ async function buildContainerArgs(
     args.push('-e', `${key}=${value}`);
   }
 
+  // Per-turn ArcFlow auth context (propagated from WebChannel). These may be
+  // empty when the caller isn't authenticated (e.g. Feishu channel or setup
+  // time) — skills that require them will fail fast inside the container.
+  if (process.env.ARCFLOW_JWT) {
+    args.push('-e', `ARCFLOW_JWT=${process.env.ARCFLOW_JWT}`);
+  }
+  if (process.env.ARCFLOW_WORKSPACE_ID) {
+    args.push('-e', `ARCFLOW_WORKSPACE_ID=${process.env.ARCFLOW_WORKSPACE_ID}`);
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {

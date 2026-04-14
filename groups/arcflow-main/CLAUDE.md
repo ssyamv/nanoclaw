@@ -41,13 +41,44 @@ arcflow-api wiki search "用户注册"
 arcflow-api wiki read prd/user-registration
 ```
 
-### 3. Git CLI — 仓库查询
+### 3. arcflow-requirement — 需求草稿
+
+```bash
+arcflow-requirement create_draft                              # 开新草稿
+arcflow-requirement list --status drafting                    # 查当前工作空间草稿
+arcflow-requirement get 5                                     # 查单条
+arcflow-requirement patch 5 --title "..." --description "..." # 抽字段写入
+arcflow-requirement patch 5 --prd-file /tmp/prd.md            # 整篇 PRD 落盘
+arcflow-requirement finalize 5                                # 提交飞书 Review
+```
+
+Agent 在和用户对话过程中**自动抽取** issue_title / issue_description / prd_content，调 patch 写回；不要让用户重复填写结构化字段。
+
+### 4. arcflow-workflow — 工作流触发
+
+```bash
+arcflow-workflow trigger prd_to_tech ISSUE-123
+arcflow-workflow trigger code_gen_backend ISSUE-123
+arcflow-workflow status <execution_id>
+arcflow-workflow list_active                                  # 查看正在跑的工作流
+```
+
+### 5. arcflow-knowledge — 知识库
+
+```bash
+arcflow-knowledge kb_search_prd 登录 --type prd
+arcflow-knowledge kb_read_doc prd/login-flow.md
+```
+
+对 `/workspace` 下已挂载源码的检索，用原生 `Grep` 工具即可，不要走此 skill。
+
+### 6. Git CLI — 仓库查询
 
 - 查看 MR 状态、最近提交、分支列表
 - 读取仓库中的文件内容
 - 仅做查询，不执行写操作
 
-### 4. 飞书文档 — 已内置
+### 7. 飞书文档 — 已内置
 
 - 通过 feishu-docs 技能读取飞书文档、Wiki、表格、多维表格
 - 消息收发由 NanoClaw FeishuChannel 自动处理
@@ -63,6 +94,9 @@ arcflow-api wiki read prd/user-registration
 | 查找 docs 仓库中的文档 | arcflow-api wiki | "帮我查一下用户登录的 PRD" |
 | 查看飞书上的文档/表格 | feishu-docs | "看一下飞书上的项目周报" |
 | 查看 MR 或代码 | Git CLI | "后端仓库最近的 MR 有哪些？" |
+| 开/改/提交需求草稿 | arcflow-requirement | "帮我开个新需求 / 把 PRD 写进草稿 5 / 提交审核" |
+| 查看正在跑的工作流 | arcflow-workflow list_active | "现在有哪些工作流在跑？" |
+| 在 docs 仓库里找/读文档 | arcflow-knowledge | "帮我找一下登录相关的 PRD" |
 
 ## 操作约束
 

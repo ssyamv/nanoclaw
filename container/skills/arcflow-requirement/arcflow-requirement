@@ -1,0 +1,139 @@
+#!/bin/bash
+# ArcFlow Requirement Tool
+# Thin wrapper around Gateway /api/requirement/* endpoints.
+set -euo pipefail
+
+check_var() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        echo "Error: $name not set" >&2
+        exit 1
+    fi
+}
+
+gw_call() {
+    # gw_call METHOD PATH [JSON_BODY]
+    check_var GATEWAY_URL
+    check_var ARCFLOW_JWT
+    local method="$1" path="$2" body="${3:-}"
+    local url="${GATEWAY_URL}${path}"
+    local args=(-sS -X "$method" -H "Authorization: Bearer ${ARCFLOW_JWT}")
+    if [[ -n "$body" ]]; then
+        args+=(-H "Content-Type: application/json" -d "$body")
+    fi
+    local resp http_code
+    resp=$(curl "${args[@]}" -w $'\n%{http_code}' "$url")
+    http_code="${resp##*$'\n'}"
+    local payload="${resp%$'\n'*}"
+    if [[ "$http_code" -ge 400 ]]; then
+        echo "Error: Gateway $method $path returned $http_code" >&2
+        echo "$payload" >&2
+        exit 1
+    fi
+    echo "$payload"
+}
+
+cmd_create_draft() {
+    check_var ARCFLOW_WORKSPACE_ID
+    local feishu_chat_id=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --feishu-chat-id) feishu_chat_id="$2"; shift 2 ;;
+            *) echo "Unknown arg: $1" >&2; exit 1 ;;
+        esac
+    done
+    local body
+    if [[ -n "$feishu_chat_id" ]]; then
+        body=$(jq -n \
+            --argjson ws "$ARCFLOW_WORKSPACE_ID" \
+            --arg fcid "$feishu_chat_id" \
+            '{workspace_id: $ws, feishu_chat_id: $fcid}')
+    else
+        body=$(jq -n \
+            --argjson ws "$ARCFLOW_WORKSPACE_ID" \
+            '{workspace_id: $ws}')
+    fi
+    gw_call POST /api/requirement/draft "$body" | jq .
+}
+
+cmd_get() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-requirement get <draft_id>" >&2; exit 1; }
+    gw_call GET "/api/requirement/$1" | jq .
+}
+
+cmd_list() {
+    local status="" limit="20"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --status) status="$2"; shift 2 ;;
+            --limit)  limit="$2";  shift 2 ;;
+            *) echo "Unknown arg: $1" >&2; exit 1 ;;
+        esac
+    done
+    local qs="workspace_id=${ARCFLOW_WORKSPACE_ID}&limit=${limit}"
+    [[ -n "$status" ]] && qs="${qs}&status=${status}"
+    gw_call GET "/api/requirement?${qs}" | jq .
+}
+
+cmd_patch() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-requirement patch <draft_id> [--title ...] [--description ...] [--prd ... | --prd-file ...]" >&2; exit 1; }
+    local draft_id="$1"; shift
+    local title="" desc="" prd="" prd_file=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --title)       title="$2";    shift 2 ;;
+            --description) desc="$2";     shift 2 ;;
+            --prd)         prd="$2";      shift 2 ;;
+            --prd-file)    prd_file="$2"; shift 2 ;;
+            *) echo "Unknown arg: $1" >&2; exit 1 ;;
+        esac
+    done
+    if [[ -n "$prd_file" ]]; then
+        [[ -f "$prd_file" ]] || { echo "Error: file not found: $prd_file" >&2; exit 1; }
+        prd="$(cat "$prd_file")"
+    fi
+    local body
+    body=$(jq -n \
+        --arg title "$title" \
+        --arg desc "$desc" \
+        --arg prd "$prd" \
+        '{}
+         + (if $title != "" then {issue_title: $title} else {} end)
+         + (if $desc  != "" then {issue_description: $desc} else {} end)
+         + (if $prd   != "" then {prd_content: $prd} else {} end)')
+    if [[ "$body" == "{}" ]]; then
+        echo "Error: no fields provided to patch" >&2
+        exit 1
+    fi
+    gw_call PATCH "/api/requirement/${draft_id}" "$body" | jq .
+}
+
+cmd_finalize() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-requirement finalize <draft_id>" >&2; exit 1; }
+    gw_call POST "/api/requirement/$1/finalize" "{}" | jq .
+}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  arcflow-requirement create_draft [--feishu-chat-id <id>]
+  arcflow-requirement get <draft_id>
+  arcflow-requirement list [--status drafting|review|approved|rejected] [--limit 20]
+  arcflow-requirement patch <draft_id> [--title ...] [--description ...] [--prd ... | --prd-file ...]
+  arcflow-requirement finalize <draft_id>
+
+Env: GATEWAY_URL, ARCFLOW_JWT, ARCFLOW_WORKSPACE_ID
+EOF
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+sub="$1"; shift
+case "$sub" in
+    create_draft) cmd_create_draft "$@" ;;
+    get)          cmd_get "$@" ;;
+    list)         cmd_list "$@" ;;
+    patch)        cmd_patch "$@" ;;
+    finalize)     cmd_finalize "$@" ;;
+    *) usage ;;
+esac
