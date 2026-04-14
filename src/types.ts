@@ -95,6 +95,9 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: produce a per-jid system-prompt context block (identity, workspace).
+  // Returned string is prepended to the Agent prompt for the next turn.
+  buildSystemContext?(jid: string): string | null;
 }
 
 // Callback type that channels use to deliver inbound messages
