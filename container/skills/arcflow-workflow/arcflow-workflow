@@ -1,0 +1,110 @@
+#!/bin/bash
+# ArcFlow Workflow Tool
+set -euo pipefail
+
+check_var() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        echo "Error: $name not set" >&2
+        exit 1
+    fi
+}
+
+gw_call() {
+    check_var GATEWAY_URL
+    local method="$1" path="$2" body="${3:-}"
+    local url="${GATEWAY_URL}${path}"
+    local args=(-sS -X "$method")
+    [[ -n "${ARCFLOW_JWT:-}" ]] && args+=(-H "Authorization: Bearer ${ARCFLOW_JWT}")
+    if [[ -n "$body" ]]; then
+        args+=(-H "Content-Type: application/json" -d "$body")
+    fi
+    local resp http_code
+    resp=$(curl "${args[@]}" -w $'\n%{http_code}' "$url")
+    http_code="${resp##*$'\n'}"
+    local payload="${resp%$'\n'*}"
+    if [[ "$http_code" -ge 400 ]]; then
+        echo "Error: Gateway $method $path returned $http_code" >&2
+        echo "$payload" >&2
+        exit 1
+    fi
+    echo "$payload"
+}
+
+cmd_trigger() {
+    [[ $# -lt 2 ]] && { echo "Usage: arcflow-workflow trigger <type> <plane_issue_id> [target_repos...]" >&2; exit 1; }
+    local type="$1" issue_id="$2"
+    shift 2
+    local -a target_repos=("$@")
+
+    case "$type" in
+        code_gen_backend)  type="code_gen"; target_repos=("backend") ;;
+        code_gen_vue3)     type="code_gen"; target_repos=("vue3") ;;
+        code_gen_flutter)  type="code_gen"; target_repos=("flutter") ;;
+        code_gen_android)  type="code_gen"; target_repos=("android") ;;
+    esac
+
+    local params="{}"
+    if [[ ${#target_repos[@]} -gt 0 ]]; then
+        local repos_json
+        repos_json=$(printf '%s\n' "${target_repos[@]}" | jq -R . | jq -s .)
+        params=$(jq -n --argjson repos "$repos_json" '{target_repos: $repos}')
+    fi
+    local body
+    body=$(jq -n \
+        --arg wt "$type" \
+        --arg pid "$issue_id" \
+        --argjson params "$params" \
+        '{workflow_type: $wt, plane_issue_id: $pid, params: $params}')
+    gw_call POST /api/workflow/trigger "$body" | jq .
+}
+
+cmd_status() {
+    [[ $# -lt 1 ]] && { echo "Usage: arcflow-workflow status <execution_id>" >&2; exit 1; }
+    gw_call GET "/api/workflow/executions/$1" | jq .
+}
+
+cmd_list_active() {
+    local type="" limit="20"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type)  type="$2";  shift 2 ;;
+            --limit) limit="$2"; shift 2 ;;
+            *) echo "Unknown arg: $1" >&2; exit 1 ;;
+        esac
+    done
+    # Gateway supports ?status=<running|queued>&workflow_type=&limit=. Fetch both
+    # running and queued, merge client-side.
+    local qs_type=""
+    [[ -n "$type" ]] && qs_type="&workflow_type=${type}"
+    local running queued
+    running=$(gw_call GET "/api/workflow/executions?status=running&limit=${limit}${qs_type}")
+    queued=$(gw_call GET "/api/workflow/executions?status=queued&limit=${limit}${qs_type}")
+    jq -s '{
+        data: ((.[0].data // .[0]) + (.[1].data // .[1])),
+        total: (((.[0].data // .[0]) | length) + ((.[1].data // .[1]) | length))
+    }' <<<"$running"$'\n'"$queued"
+}
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  arcflow-workflow trigger <type> <plane_issue_id> [target_repos...]
+  arcflow-workflow trigger code_gen_{backend|vue3|flutter|android} <plane_issue_id>
+  arcflow-workflow status <execution_id>
+  arcflow-workflow list_active [--type <workflow_type>] [--limit 20]
+
+Workflow types: prd_to_tech | tech_to_openapi | code_gen | bug_analysis
+Env: GATEWAY_URL (required), ARCFLOW_JWT (optional)
+EOF
+    exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+sub="$1"; shift
+case "$sub" in
+    trigger)     cmd_trigger "$@" ;;
+    status)      cmd_status "$@" ;;
+    list_active) cmd_list_active "$@" ;;
+    *) usage ;;
+esac
