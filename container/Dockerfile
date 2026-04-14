@@ -3,6 +3,15 @@
 
 FROM node:22-slim
 
+# Optional CN mirrors for apt + npm (build with --build-arg USE_CN_MIRROR=1)
+# node:22-slim ships without ca-certificates, so http is used for apt.
+ARG USE_CN_MIRROR=0
+RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
+      (sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g; s|http://security.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+       || sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g; s|http://security.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list 2>/dev/null || true) \
+      && npm config set registry https://registry.npmmirror.com; \
+    fi
+
 # Install system dependencies for Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
