@@ -59,15 +59,7 @@ export class WebChannel implements Channel {
 
     // POST /api/chat — receive messages from web clients
     app.post('/api/chat', async (req: Request, res: Response) => {
-      // --- Auth ---
-      const header = req.headers['authorization'];
-      if (!header || !header.startsWith('Bearer ')) {
-        res.status(401).json({ ok: false, code: 'AUTH_INVALID' });
-        return;
-      }
-      const token = header.slice(7);
       const { client_id, message } = req.body || {};
-
       if (!client_id || !message) {
         res
           .status(400)
@@ -75,21 +67,55 @@ export class WebChannel implements Channel {
         return;
       }
 
-      // Verify token (use cached entry if token matches and not expired)
-      let ctx = this.store.get(client_id);
-      if (!ctx || ctx.token !== token || this.store.isExpired(client_id)) {
-        try {
-          const v = await this.verify(token);
-          ctx = { ...v, token };
-          this.store.set(client_id, ctx);
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : '';
-          const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
-          res.status(401).json({ ok: false, code });
+      // --- Auth ---
+      // System dispatch bypass: if X-System-Secret matches the configured
+      // NANOCLAW_DISPATCH_SECRET, skip Bearer check and use a synthetic
+      // system context. Gateway encodes workspace_id in the [SYSTEM DISPATCH]
+      // message body; extract it for ctx.workspaceId.
+      const systemSecret = req.headers['x-system-secret'];
+      const expectedSecret = process.env.NANOCLAW_DISPATCH_SECRET;
+      const isSystemDispatch =
+        typeof systemSecret === 'string' &&
+        !!expectedSecret &&
+        systemSecret === expectedSecret;
+
+      let ctx: VerifiedContext & { token: string };
+      if (isSystemDispatch) {
+        const wsMatch = /workspace_id=(\d+)/.exec(String(message));
+        const workspaceId = wsMatch ? Number(wsMatch[1]) : 0;
+        ctx = {
+          userId: 0,
+          workspaceId,
+          displayName: 'system',
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          token: 'system',
+        };
+      } else {
+        const header = req.headers['authorization'];
+        if (!header || !header.startsWith('Bearer ')) {
+          res.status(401).json({ ok: false, code: 'AUTH_INVALID' });
           return;
         }
+        const token = header.slice(7);
+
+        // Verify token (use cached entry if token matches and not expired)
+        const cached = this.store.get(client_id);
+        if (cached && cached.token === token && !this.store.isExpired(client_id)) {
+          ctx = cached;
+        } else {
+          try {
+            const v = await this.verify(token);
+            ctx = { ...v, token };
+            this.store.set(client_id, ctx);
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : '';
+            const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
+            res.status(401).json({ ok: false, code });
+            return;
+          }
+        }
       }
-      setAuthForJid(`web:${client_id}`, ctx!);
+      setAuthForJid(`web:${client_id}`, ctx);
       // --- End Auth ---
 
       const chatJid = `web:${client_id}`;
