@@ -1,0 +1,21 @@
+services:
+  nanoclaw:
+    build: .
+    container_name: arcflow-nanoclaw
+    restart: unless-stopped
+    ports:
+      - "${WEB_CHANNEL_PORT:-3002}:${WEB_CHANNEL_PORT:-3002}"
+    env_file:
+      - .env
+    volumes:
+      - nanoclaw-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WEB_CHANNEL_PORT:-3002}/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  nanoclaw-data:
