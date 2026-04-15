@@ -32,8 +32,16 @@ arcflow-api workflow trigger code_gen_android <plane_issue_id>
 # Query workflow execution status
 arcflow-api workflow status <plane_issue_id>
 
-# Knowledge Q&A via Dify RAG
+# Post workflow callback to Gateway (used by non-interactive arcflow-* skills)
+# output_json must be a JSON string; on failure pass an error message instead.
+arcflow-api workflow callback <dispatch_id> <skill> success '<output_json>'
+arcflow-api workflow callback <dispatch_id> <skill> failed '{}' "error message"
+
+# Knowledge Q&A via Dify RAG (legacy, blocking chat)
 arcflow-api rag query "your question here"
+
+# RAG snippet search via Gateway (used by arcflow-rag skill)
+arcflow-api rag search <workspace_id> "question" [top_k]
 
 # Wiki.js document operations
 arcflow-api wiki list                    # List recent documents

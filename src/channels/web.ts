@@ -6,6 +6,11 @@ import { logger } from '../logger.js';
 import { ASSISTANT_NAME } from '../config.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { Channel } from '../types.js';
+import { ClientAuthStore, setAuthForJid } from '../auth/client-auth-store.js';
+import {
+  verifyViaGateway,
+  type VerifiedContext,
+} from '../auth/gateway-verify.js';
 
 export class WebChannel implements Channel {
   name = 'web';
@@ -13,14 +18,27 @@ export class WebChannel implements Channel {
   private opts: ChannelOpts;
   private port: number;
   private corsOrigin: string;
+  private store: ClientAuthStore;
+  private verify: (token: string) => Promise<VerifiedContext>;
   private connected = false;
   private httpServer: http.Server | null = null;
   private sseClients = new Map<string, Response>();
 
-  constructor(opts: ChannelOpts, port: number, corsOrigin: string) {
+  constructor(
+    opts: ChannelOpts,
+    port: number,
+    corsOrigin: string,
+    store?: ClientAuthStore,
+    verify?: (token: string) => Promise<VerifiedContext>,
+  ) {
     this.opts = opts;
     this.port = port;
     this.corsOrigin = corsOrigin;
+    this.store = store ?? new ClientAuthStore();
+    const gatewayUrl =
+      process.env.ARCFLOW_GATEWAY_URL ?? 'http://localhost:3001';
+    this.verify =
+      verify ?? ((token: string) => verifyViaGateway(gatewayUrl, token));
   }
 
   async connect(): Promise<void> {
@@ -40,7 +58,14 @@ export class WebChannel implements Channel {
     });
 
     // POST /api/chat — receive messages from web clients
-    app.post('/api/chat', (req: Request, res: Response) => {
+    app.post('/api/chat', async (req: Request, res: Response) => {
+      // --- Auth ---
+      const header = req.headers['authorization'];
+      if (!header || !header.startsWith('Bearer ')) {
+        res.status(401).json({ ok: false, code: 'AUTH_INVALID' });
+        return;
+      }
+      const token = header.slice(7);
       const { client_id, message } = req.body || {};
 
       if (!client_id || !message) {
@@ -49,6 +74,23 @@ export class WebChannel implements Channel {
           .json({ ok: false, error: 'client_id and message are required' });
         return;
       }
+
+      // Verify token (use cached entry if token matches and not expired)
+      let ctx = this.store.get(client_id);
+      if (!ctx || ctx.token !== token || this.store.isExpired(client_id)) {
+        try {
+          const v = await this.verify(token);
+          ctx = { ...v, token };
+          this.store.set(client_id, ctx);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : '';
+          const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
+          res.status(401).json({ ok: false, code });
+          return;
+        }
+      }
+      setAuthForJid(`web:${client_id}`, ctx!);
+      // --- End Auth ---
 
       const chatJid = `web:${client_id}`;
       const timestamp = new Date().toISOString();
@@ -76,14 +118,29 @@ export class WebChannel implements Channel {
     });
 
     // GET /api/chat/sse — SSE connection for receiving bot responses
-    app.get('/api/chat/sse', (req: Request, res: Response) => {
+    app.get('/api/chat/sse', async (req: Request, res: Response) => {
       const clientId = req.query.client_id as string;
+      const token = req.query.token as string;
 
-      if (!clientId) {
-        res
-          .status(400)
-          .json({ ok: false, error: 'client_id query param is required' });
+      if (!clientId || !token) {
+        res.status(401).json({ ok: false, code: 'AUTH_INVALID' });
         return;
+      }
+
+      // Verify token (use cached entry if token matches and not expired)
+      let ctx = this.store.get(clientId);
+      if (!ctx || ctx.token !== token || this.store.isExpired(clientId)) {
+        try {
+          const v = await this.verify(token);
+          ctx = { ...v, token };
+          this.store.set(clientId, ctx);
+          setAuthForJid(`web:${clientId}`, ctx);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : '';
+          const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
+          res.status(401).json({ ok: false, code });
+          return;
+        }
       }
 
       // Set SSE headers

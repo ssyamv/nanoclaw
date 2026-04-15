@@ -52,6 +52,54 @@ workflow_trigger() {
     echo "$resp" | jq .
 }
 
+workflow_callback() {
+    check_var GATEWAY_URL
+    check_var NANOCLAW_DISPATCH_SECRET
+    # Args: dispatch_id skill status output_json [error]
+    local dispatch_id="$1" skill="$2" status="$3" output_json="${4:-{}}" err="${5:-}"
+    local body
+    if [[ "$status" == "failed" ]]; then
+        body=$(jq -n \
+            --arg d "$dispatch_id" --arg s "$skill" --arg st "$status" --arg e "$err" \
+            '{dispatch_id:$d, skill:$s, status:$st, error:$e}')
+    else
+        body=$(jq -n \
+            --arg d "$dispatch_id" --arg s "$skill" --arg st "$status" \
+            --argjson o "$output_json" \
+            '{dispatch_id:$d, skill:$s, status:$st, output:$o}')
+    fi
+    local resp
+    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/workflow/callback" \
+        -H "X-System-Secret: ${NANOCLAW_DISPATCH_SECRET}" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1) || {
+        echo "Error: Failed to post workflow callback" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp"
+}
+
+rag_search() {
+    check_var GATEWAY_URL
+    check_var NANOCLAW_DISPATCH_SECRET
+    local workspace_id="$1" question="$2" top_k="${3:-8}"
+    local body
+    body=$(jq -n \
+        --arg w "$workspace_id" --arg q "$question" --argjson k "$top_k" \
+        '{workspace_id:$w, q:$q, top_k:$k}')
+    local resp
+    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/rag/search" \
+        -H "X-System-Secret: ${NANOCLAW_DISPATCH_SECRET}" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1) || {
+        echo "Error: RAG search failed" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp"
+}
+
 workflow_status() {
     check_var GATEWAY_URL
     local issue_id="$1"
@@ -151,7 +199,9 @@ usage() {
 Usage:
   arcflow-api workflow trigger <type> <issue_id> [target_repos...]
   arcflow-api workflow status <issue_id>
+  arcflow-api workflow callback <dispatch_id> <skill> <status> <output_json> [error]
   arcflow-api rag query "question"
+  arcflow-api rag search <workspace_id> "question" [top_k]
   arcflow-api wiki list
   arcflow-api wiki search "keyword"
   arcflow-api wiki read <path>
@@ -177,12 +227,26 @@ case "$1" in
             status)
                 workflow_status "$3"
                 ;;
+            callback)
+                [[ $# -lt 5 ]] && usage
+                workflow_callback "$3" "$4" "$5" "${6:-{}}" "${7:-}"
+                ;;
             *) usage ;;
         esac
         ;;
     rag)
-        [[ $# -lt 3 || "$2" != "query" ]] && usage
-        rag_query "$3"
+        [[ $# -lt 2 ]] && usage
+        case "$2" in
+            query)
+                [[ $# -lt 3 ]] && usage
+                rag_query "$3"
+                ;;
+            search)
+                [[ $# -lt 4 ]] && usage
+                rag_search "$3" "$4" "${5:-8}"
+                ;;
+            *) usage ;;
+        esac
         ;;
     wiki)
         [[ $# -lt 2 ]] && usage
