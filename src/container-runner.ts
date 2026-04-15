@@ -269,13 +269,17 @@ async function buildContainerArgs(
     args.push('-e', `FEISHU_APP_SECRET=${feishuEnvVars.FEISHU_APP_SECRET}`);
   }
 
-  // Pass ArcFlow service credentials
+  // Pass ArcFlow service credentials + Anthropic fallback creds
+  // (Anthropic vars forwarded when OneCLI gateway is unavailable.)
   const arcflowEnvVars = readEnvFile([
     'GATEWAY_URL',
     'DIFY_URL',
     'DIFY_API_KEY',
     'WIKIJS_URL',
     'WIKIJS_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
   ]);
   for (const [key, value] of Object.entries(arcflowEnvVars)) {
     args.push('-e', `${key}=${value}`);

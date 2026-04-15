@@ -27,3 +27,16 @@ export class ClientAuthStore {
     return a.expiresAt * 1000 < Date.now();
   }
 }
+
+// Module-level registry keyed by chatJid (e.g. "web:web-1-4") so callers
+// outside the channel (container-runner dispatch in index.ts) can look up
+// the per-conversation user identity at container spawn time.
+const authByJid = new Map<string, ClientAuth>();
+
+export function setAuthForJid(jid: string, auth: ClientAuth): void {
+  authByJid.set(jid, auth);
+}
+
+export function getAuthForJid(jid: string): ClientAuth | undefined {
+  return authByJid.get(jid);
+}

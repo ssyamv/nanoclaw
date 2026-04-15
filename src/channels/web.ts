@@ -6,7 +6,7 @@ import { logger } from '../logger.js';
 import { ASSISTANT_NAME } from '../config.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { Channel } from '../types.js';
-import { ClientAuthStore } from '../auth/client-auth-store.js';
+import { ClientAuthStore, setAuthForJid } from '../auth/client-auth-store.js';
 import {
   verifyViaGateway,
   type VerifiedContext,
@@ -89,6 +89,7 @@ export class WebChannel implements Channel {
           return;
         }
       }
+      setAuthForJid(`web:${client_id}`, ctx!);
       // --- End Auth ---
 
       const chatJid = `web:${client_id}`;
@@ -133,6 +134,7 @@ export class WebChannel implements Channel {
           const v = await this.verify(token);
           ctx = { ...v, token };
           this.store.set(clientId, ctx);
+          setAuthForJid(`web:${clientId}`, ctx);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : '';
           const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
