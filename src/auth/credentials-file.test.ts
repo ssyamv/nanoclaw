@@ -1,6 +1,9 @@
 import fs from 'node:fs/promises';
 import { describe, it, expect } from 'vitest';
-import { writeCredentialsFile, cleanupCredentialsFile } from './credentials-file.js';
+import {
+  writeCredentialsFile,
+  cleanupCredentialsFile,
+} from './credentials-file.js';
 
 describe('credentials-file', () => {
   it('writes JSON with mode 0400 and returns path', async () => {

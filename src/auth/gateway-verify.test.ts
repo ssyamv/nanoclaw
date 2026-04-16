@@ -11,19 +11,20 @@ afterEach(() => {
 
 describe('verifyViaGateway', () => {
   it('returns data on 200', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          code: 0,
-          data: {
-            userId: 7,
-            workspaceId: 3,
-            displayName: 'U',
-            expiresAt: 9_000_000_000,
-          },
-        }),
-        { status: 200 },
-      ),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              userId: 7,
+              workspaceId: 3,
+              displayName: 'U',
+              expiresAt: 9_000_000_000,
+            },
+          }),
+          { status: 200 },
+        ),
     ) as typeof fetch;
     const r = await verifyViaGateway('http://g', 't');
     expect(r.userId).toBe(7);
@@ -31,8 +32,9 @@ describe('verifyViaGateway', () => {
   });
 
   it('throws AUTH_EXPIRED on 401 with code AUTH_EXPIRED', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ code: 'AUTH_EXPIRED' }), { status: 401 }),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'AUTH_EXPIRED' }), { status: 401 }),
     ) as typeof fetch;
     await expect(verifyViaGateway('http://g', 't')).rejects.toThrow(
       'AUTH_EXPIRED',
@@ -40,8 +42,9 @@ describe('verifyViaGateway', () => {
   });
 
   it('throws AUTH_INVALID on other 401', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ code: 'AUTH_INVALID' }), { status: 401 }),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'AUTH_INVALID' }), { status: 401 }),
     ) as typeof fetch;
     await expect(verifyViaGateway('http://g', 't')).rejects.toThrow(
       'AUTH_INVALID',

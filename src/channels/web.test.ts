@@ -25,7 +25,8 @@ function makeVerify(
 ): (token: string) => Promise<VerifiedContext> {
   return async (token: string) => {
     if (behavior === 'ok' && token === 't.ok') return okVerifiedCtx;
-    if (behavior === 'expired' || token === 't.exp') throw new Error('AUTH_EXPIRED');
+    if (behavior === 'expired' || token === 't.exp')
+      throw new Error('AUTH_EXPIRED');
     throw new Error('AUTH_INVALID');
   };
 }
@@ -92,7 +93,10 @@ describe('WebChannel', () => {
     it('POST /api/chat calls onMessage and onChatMetadata', async () => {
       const res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t.ok' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
         body: JSON.stringify({ client_id: 'user1', message: 'hello' }),
       });
       const body = await res.json();
@@ -122,7 +126,10 @@ describe('WebChannel', () => {
     it('POST /api/chat returns 400 if client_id missing', async () => {
       const res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t.ok' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
         body: JSON.stringify({ message: 'hello' }),
       });
       expect(res.status).toBe(400);
@@ -131,7 +138,10 @@ describe('WebChannel', () => {
     it('POST /api/chat returns 400 if message missing', async () => {
       const res = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer t.ok' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
         body: JSON.stringify({ client_id: 'user1' }),
       });
       expect(res.status).toBe(400);
@@ -140,9 +150,12 @@ describe('WebChannel', () => {
     it('sendMessage pushes to SSE client', async () => {
       // Connect SSE client
       const controller = new AbortController();
-      const ssePromise = fetch(`${baseUrl}/api/chat/sse?client_id=user2&token=t.ok`, {
-        signal: controller.signal,
-      });
+      const ssePromise = fetch(
+        `${baseUrl}/api/chat/sse?client_id=user2&token=t.ok`,
+        {
+          signal: controller.signal,
+        },
+      );
 
       // Wait a moment for SSE connection to establish
       await new Promise((r) => setTimeout(r, 100));
@@ -204,13 +217,22 @@ describe('WebChannel', () => {
     });
 
     it('POST /api/chat with expired bearer returns 401 AUTH_EXPIRED', async () => {
-      const expChannel = new WebChannel(opts, 0, '*', store, makeVerify('expired'));
+      const expChannel = new WebChannel(
+        opts,
+        0,
+        '*',
+        store,
+        makeVerify('expired'),
+      );
       await expChannel.connect();
       const expPort = expChannel.getPort();
       try {
         const res = await fetch(`http://127.0.0.1:${expPort}/api/chat`, {
           method: 'POST',
-          headers: { authorization: 'Bearer t.exp', 'content-type': 'application/json' },
+          headers: {
+            authorization: 'Bearer t.exp',
+            'content-type': 'application/json',
+          },
           body: JSON.stringify({ client_id: 'c-3', message: 'hi' }),
         });
         expect(res.status).toBe(401);
@@ -228,19 +250,36 @@ describe('WebChannel', () => {
     });
 
     it('GET /api/chat/sse with valid token establishes SSE', async () => {
-      store.set('c-2', { userId: 7, workspaceId: 3, displayName: 'U', token: 't.ok', expiresAt: 9e9 });
-      const controller = new AbortController();
-      const res = await fetch(`${baseUrl}/api/chat/sse?client_id=c-2&token=t.ok`, {
-        signal: controller.signal,
+      store.set('c-2', {
+        userId: 7,
+        workspaceId: 3,
+        displayName: 'U',
+        token: 't.ok',
+        expiresAt: 9e9,
       });
+      const controller = new AbortController();
+      const res = await fetch(
+        `${baseUrl}/api/chat/sse?client_id=c-2&token=t.ok`,
+        {
+          signal: controller.signal,
+        },
+      );
       expect(res.status).toBe(200);
       expect(res.headers.get('content-type')).toContain('text/event-stream');
       controller.abort();
     });
 
     it('GET /api/chat/sse with mismatched token returns 401', async () => {
-      store.set('c-3', { userId: 7, workspaceId: 3, displayName: 'U', token: 't.ok', expiresAt: 9e9 });
-      const res = await fetch(`${baseUrl}/api/chat/sse?client_id=c-3&token=evil`);
+      store.set('c-3', {
+        userId: 7,
+        workspaceId: 3,
+        displayName: 'U',
+        token: 't.ok',
+        expiresAt: 9e9,
+      });
+      const res = await fetch(
+        `${baseUrl}/api/chat/sse?client_id=c-3&token=evil`,
+      );
       expect(res.status).toBe(401);
     });
   });

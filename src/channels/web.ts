@@ -100,7 +100,11 @@ export class WebChannel implements Channel {
 
         // Verify token (use cached entry if token matches and not expired)
         const cached = this.store.get(client_id);
-        if (cached && cached.token === token && !this.store.isExpired(client_id)) {
+        if (
+          cached &&
+          cached.token === token &&
+          !this.store.isExpired(client_id)
+        ) {
           ctx = cached;
         } else {
           try {
@@ -109,7 +113,8 @@ export class WebChannel implements Channel {
             this.store.set(client_id, ctx);
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : '';
-            const code = msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
+            const code =
+              msg === 'AUTH_EXPIRED' ? 'AUTH_EXPIRED' : 'AUTH_INVALID';
             res.status(401).json({ ok: false, code });
             return;
           }

@@ -247,11 +247,7 @@ describe('container-runner timeout behavior', () => {
     // for the fs ops and fake timers only for the timeout logic.
     vi.useRealTimers();
 
-    const resultPromise = runContainerAgent(
-      testGroup,
-      inputWithAuth,
-      () => {},
-    );
+    const resultPromise = runContainerAgent(testGroup, inputWithAuth, () => {});
 
     // Wait for writeCredentialsFile + spawn to complete (real async)
     await new Promise((r) => setTimeout(r, 50));
@@ -262,7 +258,8 @@ describe('container-runner timeout behavior', () => {
     const dockerArgs: string[] = spawnMock.mock.calls[0][1] as string[];
     // Check that a credentials file is mounted to /run/arcflow/credentials.json
     const mountIdx = dockerArgs.findIndex(
-      (a) => typeof a === 'string' && a.includes('/run/arcflow/credentials.json:ro'),
+      (a) =>
+        typeof a === 'string' && a.includes('/run/arcflow/credentials.json:ro'),
     );
     expect(mountIdx).toBeGreaterThan(-1);
   });
