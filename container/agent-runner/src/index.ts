@@ -593,7 +593,7 @@ async function runQuery(
               result: null,
               newSessionId,
               eventType: event.type,
-              eventData: event.data,
+              eventData: event.text ? { text: event.text } : undefined,
             });
           }
         }
@@ -608,7 +608,7 @@ async function runQuery(
           result: null,
           newSessionId,
           eventType: event.type,
-          eventData: event.data,
+          eventData: event.text ? { text: event.text } : undefined,
         });
       }
       for (const [toolCallId] of activeToolCalls) {
