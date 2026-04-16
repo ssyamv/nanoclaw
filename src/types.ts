@@ -91,7 +91,7 @@ export interface Channel {
   sendEvent?(
     jid: string,
     event: string,
-    data: Record<string, unknown>,
+    data: unknown,
   ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;

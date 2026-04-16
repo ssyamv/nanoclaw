@@ -259,7 +259,7 @@ export class WebChannel implements Channel {
   async sendEvent(
     jid: string,
     event: string,
-    data: Record<string, unknown>,
+    data: unknown,
   ): Promise<void> {
     const clientId = jid.replace(/^web:/, '');
     this.emitEvent(clientId, event, data);
