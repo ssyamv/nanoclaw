@@ -216,6 +216,17 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+export function buildAutoRegisteredWebGroup(chatJid: string): RegisteredGroup | null {
+  if (!chatJid.startsWith('web:')) return null;
+  return {
+    name: `Web-${chatJid.slice(4)}`,
+    folder: 'web',
+    trigger: `@${ASSISTANT_NAME}`,
+    added_at: new Date().toISOString(),
+    requiresTrigger: false,
+  };
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -665,6 +676,14 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
+      if (!registeredGroups[chatJid]) {
+        const autoGroup = buildAutoRegisteredWebGroup(chatJid);
+        if (autoGroup) {
+          registerGroup(chatJid, autoGroup);
+          logger.info({ chatJid, folder: autoGroup.folder }, 'Auto-registered web chat');
+        }
+      }
+
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
