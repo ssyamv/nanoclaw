@@ -256,11 +256,7 @@ export class WebChannel implements Channel {
     logger.info({ jid }, 'Web: message sent via SSE');
   }
 
-  async sendEvent(
-    jid: string,
-    event: string,
-    data: unknown,
-  ): Promise<void> {
+  async sendEvent(jid: string, event: string, data: unknown): Promise<void> {
     const clientId = jid.replace(/^web:/, '');
     this.emitEvent(clientId, event, data);
   }
