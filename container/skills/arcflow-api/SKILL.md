@@ -1,6 +1,6 @@
 ---
 name: arcflow-api
-description: Call ArcFlow Gateway (workflow trigger/status), Dify RAG (knowledge Q&A), and Wiki.js (document query) APIs. Use this for workflow operations, knowledge questions, and document lookups.
+description: Call ArcFlow Gateway for workflow operations, memory snapshot lookup, requirement drafting, document query, and RAG search.
 allowed-tools: Bash(arcflow-api:*)
 ---
 
@@ -13,13 +13,17 @@ Interact with ArcFlow platform services from inside the agent container.
 - **Trigger workflows** — user asks to generate tech docs, OpenAPI, or code for an Issue
 - **Check workflow status** — user asks about progress of a workflow execution
 - **Knowledge Q&A** — user asks technical/documentation questions that need RAG search
-- **Document operations** — user asks to find, search, or read docs from Wiki.js
+- **Memory context** — user asks what recent workspace context or user actions matter
+- **Document operations** — user asks to find, search, or read docs from the docs Git repo
 
 ## Commands
 
 ```bash
 # List my issues in current workspace
 arcflow-api issues my
+
+# Read workspace memory snapshot (defaults to current workspace from credentials)
+arcflow-api memory snapshot
 
 # Create a requirement draft preview (dry-run by default)
 arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级"
@@ -46,13 +50,13 @@ arcflow-api workflow status <plane_issue_id>
 arcflow-api workflow callback <dispatch_id> <skill> success '<output_json>'
 arcflow-api workflow callback <dispatch_id> <skill> failed '{}' "error message"
 
-# Knowledge Q&A via Dify RAG (legacy, blocking chat)
+# Knowledge Q&A via ArcFlow RAG
 arcflow-api rag query "your question here"
 
 # RAG snippet search via Gateway (used by arcflow-rag skill)
 arcflow-api rag search <workspace_id> "question" [top_k]
 
-# Wiki.js document operations
+# docs Git document operations
 arcflow-api wiki list                    # List recent documents
 arcflow-api wiki search "keyword"        # Search documents
 arcflow-api wiki read <path>             # Read document content
@@ -63,6 +67,9 @@ arcflow-api wiki read <path>             # Read document content
 ```bash
 # Look at my current issues
 arcflow-api issues my
+
+# Review recent workspace memory before continuing a conversation
+arcflow-api memory snapshot
 
 # Preview a requirement draft before asking the user to confirm execution
 arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级"
@@ -88,10 +95,10 @@ arcflow-api wiki search "用户注册"
 
 ## Notes
 
-- `issues my` and `requirements draft` read `/run/arcflow/credentials.json`
+- `issues my`, `memory snapshot`, and `requirements draft` read `/run/arcflow/credentials.json`
   to forward the current user's token and workspace automatically
 - `requirements draft` is dry-run by default; pass `--execute` only after the
   user explicitly confirms the write
 - Workflow trigger will show the execution ID on success
 - RAG query returns an answer based on indexed documentation
-- Wiki operations query the Wiki.js GraphQL API
+- Wiki commands are legacy naming; they currently query the ArcFlow docs Git APIs

@@ -197,6 +197,38 @@ issues_my() {
     echo "$resp" | jq .
 }
 
+memory_snapshot() {
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
+
+    local workspace_id="${1:-}"
+    if [[ -z "$workspace_id" ]]; then
+        workspace_id=$(read_credential workspaceId)
+    fi
+    if [[ -z "$workspace_id" ]]; then
+        echo "Error: workspaceId is missing from ArcFlow credentials" >&2
+        exit 1
+    fi
+
+    local header_args=()
+    while IFS= read -r header; do
+        header_args+=(-H "$header")
+    done < <(interactive_headers)
+
+    local resp
+    resp=$(curl -sf "${gateway_url}/api/memory/snapshot?workspace_id=${workspace_id}" \
+        "${header_args[@]}" 2>&1) || {
+        echo "Error: Failed to fetch memory snapshot" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp" | jq .
+}
+
 requirement_draft() {
     local gateway_url
     gateway_url=$(resolve_gateway_url)
@@ -319,6 +351,7 @@ Usage:
   arcflow-api workflow status <issue_id>
   arcflow-api workflow callback <dispatch_id> <skill> <status> <output_json> [error]
   arcflow-api issues my
+  arcflow-api memory snapshot [workspace_id]
   arcflow-api requirements draft <title> <content> [--execute]
   arcflow-api rag query "question"
   arcflow-api rag search <workspace_id> "question" [top_k]
@@ -372,6 +405,13 @@ case "$1" in
         [[ $# -lt 2 ]] && usage
         case "$2" in
             my) issues_my ;;
+            *) usage ;;
+        esac
+        ;;
+    memory)
+        [[ $# -lt 2 ]] && usage
+        case "$2" in
+            snapshot) memory_snapshot "${3:-}" ;;
             *) usage ;;
         esac
         ;;

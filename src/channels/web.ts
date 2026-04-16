@@ -23,6 +23,7 @@ export class WebChannel implements Channel {
   private connected = false;
   private httpServer: http.Server | null = null;
   private sseClients = new Map<string, Response>();
+  private jidToClientId = new Map<string, string>();
   private sseHistory = new Map<
     string,
     Array<{ id: number; event: string; data: unknown }>
@@ -44,6 +45,14 @@ export class WebChannel implements Channel {
       process.env.ARCFLOW_GATEWAY_URL ?? 'http://localhost:3001';
     this.verify =
       verify ?? ((token: string) => verifyViaGateway(gatewayUrl, token));
+  }
+
+  private canonicalJid(
+    clientId: string,
+    ctx?: VerifiedContext,
+  ): string {
+    if (ctx?.userId) return `web:user-${ctx.userId}`;
+    return `web:${clientId}`;
   }
 
   async connect(): Promise<void> {
@@ -125,10 +134,12 @@ export class WebChannel implements Channel {
           }
         }
       }
+      const chatJid = this.canonicalJid(client_id, ctx);
+      setAuthForJid(chatJid, ctx);
       setAuthForJid(`web:${client_id}`, ctx);
+      this.jidToClientId.set(chatJid, client_id);
       // --- End Auth ---
 
-      const chatJid = `web:${client_id}`;
       const timestamp = new Date().toISOString();
       const messageId = `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const content = `@${ASSISTANT_NAME} ${message}`.trim();
@@ -136,7 +147,7 @@ export class WebChannel implements Channel {
       this.opts.onChatMetadata(
         chatJid,
         timestamp,
-        `Web-${client_id}`,
+        `Web-${chatJid.slice(4)}`,
         'web',
         false,
       );
@@ -175,6 +186,8 @@ export class WebChannel implements Channel {
           const v = await this.verify(token);
           ctx = { ...v, token };
           this.store.set(clientId, ctx);
+          const chatJid = this.canonicalJid(clientId, ctx);
+          setAuthForJid(chatJid, ctx);
           setAuthForJid(`web:${clientId}`, ctx);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : '';
@@ -183,6 +196,8 @@ export class WebChannel implements Channel {
           return;
         }
       }
+      const chatJid = this.canonicalJid(clientId, ctx);
+      this.jidToClientId.set(chatJid, clientId);
 
       // Set SSE headers
       res.setHeader('Content-Type', 'text/event-stream');
@@ -213,6 +228,9 @@ export class WebChannel implements Channel {
 
       // Clean up on disconnect
       req.on('close', () => {
+        if (this.jidToClientId.get(chatJid) === clientId) {
+          this.jidToClientId.delete(chatJid);
+        }
         this.sseClients.delete(clientId);
         logger.info({ clientId }, 'Web: SSE client disconnected');
       });
@@ -244,7 +262,7 @@ export class WebChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    const clientId = jid.replace(/^web:/, '');
+    const clientId = this.jidToClientId.get(jid) ?? jid.replace(/^web:/, '');
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.emitEvent(clientId, 'message_delta', {
       message_id: messageId,
@@ -257,12 +275,12 @@ export class WebChannel implements Channel {
   }
 
   async sendEvent(jid: string, event: string, data: unknown): Promise<void> {
-    const clientId = jid.replace(/^web:/, '');
+    const clientId = this.jidToClientId.get(jid) ?? jid.replace(/^web:/, '');
     this.emitEvent(clientId, event, data);
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    const clientId = jid.replace(/^web:/, '');
+    const clientId = this.jidToClientId.get(jid) ?? jid.replace(/^web:/, '');
     this.emitEvent(clientId, 'typing', { is_typing: isTyping });
   }
 
@@ -288,6 +306,7 @@ export class WebChannel implements Channel {
       }
     }
     this.sseClients.clear();
+    this.jidToClientId.clear();
 
     if (this.httpServer) {
       await new Promise<void>((resolve) => {

@@ -192,4 +192,23 @@ describe('arcflow-api CLI', () => {
       dryRun: false,
     });
   });
+
+  it('memory snapshot uses workspace from credentials by default', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: {
+        workspace: { id: 3, slug: 'acme' },
+        recent_user_actions: [{ action_type: 'nanoclaw.dispatch.arcflow-prd-to-tech' }],
+      },
+    }));
+    cleanups.push(gateway.close);
+
+    const { stdout } = await runScript(['memory', 'snapshot'], gateway.url);
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0].method).toBe('GET');
+    expect(gateway.requests[0].url).toBe('/api/memory/snapshot?workspace_id=3');
+    expect(gateway.requests[0].headers.authorization).toBe('Bearer token-123');
+    expect(gateway.requests[0].headers['x-workspace-id']).toBe('3');
+    expect(stdout).toContain('"slug": "acme"');
+  });
 });

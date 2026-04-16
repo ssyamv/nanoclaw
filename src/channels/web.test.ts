@@ -105,21 +105,52 @@ describe('WebChannel', () => {
       expect(typeof body.message_id).toBe('string');
 
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'web:user1',
+        'web:user-7',
         expect.any(String),
-        'Web-user1',
+        'Web-user-7',
         'web',
         false,
       );
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'web:user1',
+        'web:user-7',
         expect.objectContaining({
-          chat_jid: 'web:user1',
+          chat_jid: 'web:user-7',
           sender: 'user1',
           sender_name: 'user1',
           content: expect.stringContaining('hello'),
         }),
+      );
+    });
+
+    it('canonicalizes web chat jids per verified user', async () => {
+      await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
+        body: JSON.stringify({ client_id: 'web-7-1', message: 'hello' }),
+      });
+
+      await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
+        body: JSON.stringify({ client_id: 'web-7-2', message: 'again' }),
+      });
+
+      expect(opts.onMessage).toHaveBeenNthCalledWith(
+        1,
+        'web:user-7',
+        expect.objectContaining({ chat_jid: 'web:user-7', sender: 'web-7-1' }),
+      );
+      expect(opts.onMessage).toHaveBeenNthCalledWith(
+        2,
+        'web:user-7',
+        expect.objectContaining({ chat_jid: 'web:user-7', sender: 'web-7-2' }),
       );
     });
 
@@ -189,6 +220,35 @@ describe('WebChannel', () => {
       expect(text).toContain('event: message_delta');
       expect(text).toContain('"text":"Hello from bot"');
       expect(text).toContain('event: message_end');
+    });
+
+    it('routes canonical web user jid responses to the latest connected client', async () => {
+      const controller = new AbortController();
+      const ssePromise = fetch(
+        `${baseUrl}/api/chat/sse?client_id=web-7-99&token=t.ok`,
+        {
+          signal: controller.signal,
+        },
+      );
+
+      await new Promise((r) => setTimeout(r, 100));
+      await channel.sendMessage('web:user-7', 'Hello reused user');
+
+      const res = await ssePromise;
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+
+      for (let i = 0; i < 10; i++) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        if (text.includes('event: message_end')) break;
+      }
+
+      controller.abort();
+
+      expect(text).toContain('"text":"Hello reused user"');
     });
 
     it('POST /api/chat emits session_start to connected SSE client', async () => {

@@ -216,11 +216,16 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
-export function buildAutoRegisteredWebGroup(chatJid: string): RegisteredGroup | null {
+export function buildAutoRegisteredWebGroup(
+  chatJid: string,
+): RegisteredGroup | null {
   if (!chatJid.startsWith('web:')) return null;
+  const clientId = chatJid.slice(4);
+  const match = /^web-(\d+)-/.exec(clientId) ?? /^user-(\d+)$/.exec(clientId);
+  const folder = match ? `web-user-${match[1]}` : 'web';
   return {
-    name: `Web-${chatJid.slice(4)}`,
-    folder: 'web',
+    name: `Web-${clientId}`,
+    folder,
     trigger: `@${ASSISTANT_NAME}`,
     added_at: new Date().toISOString(),
     requiresTrigger: false,
@@ -680,7 +685,10 @@ async function main(): Promise<void> {
         const autoGroup = buildAutoRegisteredWebGroup(chatJid);
         if (autoGroup) {
           registerGroup(chatJid, autoGroup);
-          logger.info({ chatJid, folder: autoGroup.folder }, 'Auto-registered web chat');
+          logger.info(
+            { chatJid, folder: autoGroup.folder },
+            'Auto-registered web chat',
+          );
         }
       }
 

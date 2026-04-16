@@ -28,6 +28,9 @@
 # 查当前工作空间里分配给我的 Issue
 arcflow-api issues my
 
+# 看当前工作空间近期上下文 / 最近用户动作
+arcflow-api memory snapshot
+
 # 创建需求草稿（默认 dry-run 预览）
 arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级"
 
@@ -63,6 +66,7 @@ arcflow-api wiki read prd/user-registration
 | 用户意图 | 优先使用的工具 | 示例 |
 |----------|--------------|------|
 | 看我当前负责的事项 | arcflow-api issues my | "看看我现在有哪些 issue" |
+| 补上下文 / 看最近发生了什么 | arcflow-api memory snapshot | "先看下这个工作空间最近做过什么" |
 | 预览/创建需求草稿 | arcflow-api requirements draft | "帮我起草一个统一登录改造需求" |
 | 问项目/技术/文档相关问题 | arcflow-api rag query | "用户登录的接口定义在哪？" |
 | 创建/查询/更新任务 | Plane MCP | "创建一个用户注册的 Issue" |
@@ -99,6 +103,7 @@ arcflow-api wiki read prd/user-registration
 
 ### 3. 文档与知识问答
 
+- 如果用户明显是在延续上一个工作空间上下文、但你缺少近期动作背景，先执行 `arcflow-api memory snapshot`
 - 查定义、查方案、查接口位置：优先 `arcflow-api rag query`
 - 查 docs 仓库里已有文档路径或全文：优先 `arcflow-api wiki`
 - 只有明确需要飞书文档内容时才用 `feishu-docs`
