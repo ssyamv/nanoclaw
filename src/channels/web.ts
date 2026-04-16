@@ -23,6 +23,11 @@ export class WebChannel implements Channel {
   private connected = false;
   private httpServer: http.Server | null = null;
   private sseClients = new Map<string, Response>();
+  private sseHistory = new Map<
+    string,
+    Array<{ id: number; event: string; data: unknown }>
+  >();
+  private nextEventId = 1;
 
   constructor(
     opts: ChannelOpts,
@@ -145,6 +150,11 @@ export class WebChannel implements Channel {
         timestamp,
       });
 
+      this.emitEvent(client_id, 'session_start', {
+        client_id,
+        message_id: messageId,
+      });
+
       res.json({ ok: true, message_id: messageId });
     });
 
@@ -180,11 +190,6 @@ export class WebChannel implements Channel {
       res.setHeader('Connection', 'keep-alive');
       res.flushHeaders();
 
-      // Send initial connected event
-      res.write(
-        `event: connected\ndata: ${JSON.stringify({ type: 'connected', client_id: clientId })}\n\n`,
-      );
-
       // Close existing SSE connection for this client
       const existing = this.sseClients.get(clientId);
       if (existing && !existing.writableEnded) {
@@ -193,6 +198,16 @@ export class WebChannel implements Channel {
 
       // Store the SSE response for this client
       this.sseClients.set(clientId, res);
+      this.replayEvents(
+        clientId,
+        this.parseLastEventId(req.headers['last-event-id']),
+        res,
+      );
+      this.writeEvent(res, {
+        id: null,
+        event: 'connected',
+        data: { type: 'connected', client_id: clientId },
+      });
 
       logger.info({ clientId }, 'Web: SSE client connected');
 
@@ -230,31 +245,29 @@ export class WebChannel implements Channel {
 
   async sendMessage(jid: string, text: string): Promise<void> {
     const clientId = jid.replace(/^web:/, '');
-    const sseRes = this.sseClients.get(clientId);
-
-    if (!sseRes || sseRes.writableEnded) {
-      logger.warn({ jid }, 'Web: no SSE client found for jid');
-      return;
-    }
-
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const data = JSON.stringify({
+    this.emitEvent(clientId, 'message_delta', {
       message_id: messageId,
-      content: text,
-      done: true,
+      text,
     });
-    sseRes.write(`event: message\ndata: ${data}\n\n`);
+    this.emitEvent(clientId, 'message_end', {
+      message_id: messageId,
+    });
     logger.info({ jid }, 'Web: message sent via SSE');
+  }
+
+  async sendEvent(
+    jid: string,
+    event: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const clientId = jid.replace(/^web:/, '');
+    this.emitEvent(clientId, event, data);
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     const clientId = jid.replace(/^web:/, '');
-    const sseRes = this.sseClients.get(clientId);
-
-    if (!sseRes || sseRes.writableEnded) return;
-
-    const data = JSON.stringify({ is_typing: isTyping });
-    sseRes.write(`event: typing\ndata: ${data}\n\n`);
+    this.emitEvent(clientId, 'typing', { is_typing: isTyping });
   }
 
   isConnected(): boolean {
@@ -289,6 +302,55 @@ export class WebChannel implements Channel {
 
     this.connected = false;
     logger.info('Web channel disconnected');
+  }
+
+  private parseLastEventId(header: string | string[] | undefined): number | null {
+    const raw = Array.isArray(header) ? header[0] : header;
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private emitEvent(clientId: string, event: string, data: unknown): void {
+    const entry = {
+      id: this.nextEventId++,
+      event,
+      data,
+    };
+    const history = this.sseHistory.get(clientId) ?? [];
+    history.push(entry);
+    if (history.length > 100) history.shift();
+    this.sseHistory.set(clientId, history);
+
+    const res = this.sseClients.get(clientId);
+    if (res && !res.writableEnded) {
+      this.writeEvent(res, entry);
+    }
+  }
+
+  private replayEvents(
+    clientId: string,
+    lastEventId: number | null,
+    res: Response,
+  ): void {
+    if (lastEventId == null) return;
+    const history = this.sseHistory.get(clientId) ?? [];
+    for (const entry of history) {
+      if (entry.id > lastEventId) {
+        this.writeEvent(res, entry);
+      }
+    }
+  }
+
+  private writeEvent(
+    res: Response,
+    entry: { id: number | null; event: string; data: unknown },
+  ): void {
+    if (entry.id != null) {
+      res.write(`id: ${entry.id}\n`);
+    }
+    res.write(`event: ${entry.event}\n`);
+    res.write(`data: ${JSON.stringify(entry.data)}\n\n`);
   }
 }
 

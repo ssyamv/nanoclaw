@@ -23,6 +23,13 @@ import {
   PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import {
+  createInternalTagParserState,
+  flushInternalTagParser,
+  parseInternalTagDelta,
+} from './internal-tags.js';
+import { extractAssistantSnapshot } from './assistant-events.js';
+import { summarizeSdkMessage } from './sdk-message-debug.js';
 
 interface ContainerInput {
   prompt: string;
@@ -40,6 +47,8 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  eventType?: string;
+  eventData?: Record<string, unknown>;
 }
 
 interface SessionEntry {
@@ -383,6 +392,7 @@ async function runQuery(
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
 }> {
+  const debugSdkMessages = process.env.NANOCLAW_DEBUG_SDK_MESSAGES === '1';
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -411,6 +421,9 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let lastAssistantText = '';
+  const internalTagState = createInternalTagParserState();
+  const activeToolCalls = new Map<string, string>();
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -498,6 +511,9 @@ async function runQuery(
         ? `system/${(message as { subtype?: string }).subtype}`
         : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
+    if (debugSdkMessages) {
+      log(`[sdk-summary] ${JSON.stringify(summarizeSdkMessage(message))}`);
+    }
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -506,6 +522,13 @@ async function runQuery(
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId,
+        eventType: 'session_start',
+        eventData: { session_id: newSessionId },
+      });
     }
 
     if (
@@ -522,7 +545,85 @@ async function runQuery(
       );
     }
 
+    if (message.type === 'assistant') {
+      const snapshot = extractAssistantSnapshot(message);
+      const assistantText = snapshot.text;
+      for (const toolCall of snapshot.toolCalls) {
+        if (activeToolCalls.has(toolCall.id)) continue;
+        activeToolCalls.set(toolCall.id, toolCall.name);
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          eventType: 'tool_call_start',
+          eventData: {
+            tool_call_id: toolCall.id,
+            name: toolCall.name,
+            input_preview:
+              typeof toolCall.input === 'string'
+                ? toolCall.input
+                : JSON.stringify(toolCall.input ?? {}),
+          },
+        });
+      }
+      for (const toolUseId of snapshot.toolResults) {
+        if (!activeToolCalls.has(toolUseId)) continue;
+        activeToolCalls.delete(toolUseId);
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          eventType: 'tool_call_end',
+          eventData: {
+            tool_call_id: toolUseId,
+            ok: true,
+          },
+        });
+      }
+      if (assistantText) {
+        const delta = assistantText.startsWith(lastAssistantText)
+          ? assistantText.slice(lastAssistantText.length)
+          : assistantText;
+        lastAssistantText = assistantText;
+        if (delta) {
+          const deltaEvents = parseInternalTagDelta(delta, internalTagState);
+          for (const event of deltaEvents) {
+            writeOutput({
+              status: 'success',
+              result: null,
+              newSessionId,
+              eventType: event.type,
+              eventData: event.data,
+            });
+          }
+        }
+      }
+    }
+
     if (message.type === 'result') {
+      const trailingEvents = flushInternalTagParser(internalTagState);
+      for (const event of trailingEvents) {
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          eventType: event.type,
+          eventData: event.data,
+        });
+      }
+      for (const [toolCallId] of activeToolCalls) {
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId,
+          eventType: 'tool_call_end',
+          eventData: {
+            tool_call_id: toolCallId,
+            ok: true,
+          },
+        });
+      }
+      activeToolCalls.clear();
       resultCount++;
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;

@@ -147,7 +147,7 @@ describe('WebChannel', () => {
       expect(res.status).toBe(400);
     });
 
-    it('sendMessage pushes to SSE client', async () => {
+    it('sendMessage pushes structured SSE events to client', async () => {
       // Connect SSE client
       const controller = new AbortController();
       const ssePromise = fetch(
@@ -179,15 +179,93 @@ describe('WebChannel', () => {
           const { value, done } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
-          if (text.includes('"content":')) return;
+          if (text.includes('event: message_end')) return;
         }
       };
       await readUntilMessage();
 
       controller.abort();
 
-      expect(text).toContain('event: message');
-      expect(text).toContain('Hello from bot');
+      expect(text).toContain('event: message_delta');
+      expect(text).toContain('"text":"Hello from bot"');
+      expect(text).toContain('event: message_end');
+    });
+
+    it('POST /api/chat emits session_start to connected SSE client', async () => {
+      const controller = new AbortController();
+      const res = await fetch(
+        `${baseUrl}/api/chat/sse?client_id=user3&token=t.ok`,
+        { signal: controller.signal },
+      );
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+
+      await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer t.ok',
+        },
+        body: JSON.stringify({ client_id: 'user3', message: 'hello' }),
+      });
+
+      for (let i = 0; i < 10; i++) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        if (text.includes('event: session_start')) break;
+      }
+
+      controller.abort();
+      expect(text).toContain('event: session_start');
+    });
+
+    it('replays events after Last-Event-ID', async () => {
+      const firstController = new AbortController();
+      const firstRes = await fetch(
+        `${baseUrl}/api/chat/sse?client_id=user4&token=t.ok`,
+        { signal: firstController.signal },
+      );
+      const firstReader = firstRes.body!.getReader();
+      const decoder = new TextDecoder();
+
+      await new Promise((r) => setTimeout(r, 50));
+      await channel.sendMessage('web:user4', 'Replay me');
+
+      let firstText = '';
+      for (let i = 0; i < 10; i++) {
+        const { value, done } = await firstReader.read();
+        if (done) break;
+        firstText += decoder.decode(value, { stream: true });
+        if (firstText.includes('event: message_end')) break;
+      }
+      firstController.abort();
+
+      const lastIdMatch = firstText.match(/id:\s*(\d+)/g);
+      expect(lastIdMatch).toBeTruthy();
+      const firstReplayId = Number(lastIdMatch![0].replace(/id:\s*/, '')) - 1;
+
+      const replayController = new AbortController();
+      const replayRes = await fetch(
+        `${baseUrl}/api/chat/sse?client_id=user4&token=t.ok`,
+        {
+          signal: replayController.signal,
+          headers: { 'Last-Event-ID': String(firstReplayId) },
+        },
+      );
+      const replayReader = replayRes.body!.getReader();
+      let replayText = '';
+      for (let i = 0; i < 10; i++) {
+        const { value, done } = await replayReader.read();
+        if (done) break;
+        replayText += decoder.decode(value, { stream: true });
+        if (replayText.includes('event: message_end')) break;
+      }
+      replayController.abort();
+
+      expect(replayText).toContain('event: message_end');
+      expect(replayText).toContain('Replay me');
     });
 
     // --- Task 4: POST auth ---------------------------------------------------

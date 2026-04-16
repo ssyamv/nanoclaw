@@ -18,6 +18,15 @@ Interact with ArcFlow platform services from inside the agent container.
 ## Commands
 
 ```bash
+# List my issues in current workspace
+arcflow-api issues my
+
+# Create a requirement draft preview (dry-run by default)
+arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级"
+
+# Execute requirement draft creation
+arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级" --execute
+
 # Trigger a workflow
 arcflow-api workflow trigger <type> <plane_issue_id> [target_repos...]
 # type: prd_to_tech | tech_to_openapi | code_gen | bug_analysis
@@ -52,6 +61,12 @@ arcflow-api wiki read <path>             # Read document content
 ## Examples
 
 ```bash
+# Look at my current issues
+arcflow-api issues my
+
+# Preview a requirement draft before asking the user to confirm execution
+arcflow-api requirements draft "统一登录改造" "需要支持 SSO 与权限分级"
+
 # Trigger tech doc generation for ISSUE-123
 arcflow-api workflow trigger prd_to_tech ISSUE-123
 
@@ -73,6 +88,10 @@ arcflow-api wiki search "用户注册"
 
 ## Notes
 
+- `issues my` and `requirements draft` read `/run/arcflow/credentials.json`
+  to forward the current user's token and workspace automatically
+- `requirements draft` is dry-run by default; pass `--execute` only after the
+  user explicitly confirms the write
 - Workflow trigger will show the execution ID on success
 - RAG query returns an answer based on indexed documentation
 - Wiki operations query the Wiki.js GraphQL API

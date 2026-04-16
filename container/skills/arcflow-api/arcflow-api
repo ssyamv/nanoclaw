@@ -11,10 +11,53 @@ check_var() {
     fi
 }
 
+credentials_file() {
+    echo "${ARCFLOW_CREDENTIALS_FILE:-/run/arcflow/credentials.json}"
+}
+
+read_credential() {
+    local key="$1"
+    local file
+    file=$(credentials_file)
+    if [[ ! -f "$file" ]]; then
+        echo ""
+        return 0
+    fi
+    jq -r ".$key // empty" "$file"
+}
+
+resolve_gateway_url() {
+    local from_env="${GATEWAY_URL:-}"
+    if [[ -n "$from_env" ]]; then
+        echo "$from_env"
+        return 0
+    fi
+    read_credential gatewayUrl
+}
+
+interactive_headers() {
+    local token workspace_id
+    token=$(read_credential token)
+    workspace_id=$(read_credential workspaceId)
+    if [[ -z "$token" || -z "$workspace_id" ]]; then
+        echo "Error: ArcFlow credentials are missing" >&2
+        exit 1
+    fi
+    printf '%s\n' \
+        "Authorization: Bearer ${token}" \
+        "X-Workspace-Id: ${workspace_id}" \
+        "Content-Type: application/json"
+}
+
 # --- Workflow commands ---
 
 workflow_trigger() {
-    check_var GATEWAY_URL
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
     local type="$1" issue_id="$2"
     shift 2
     local target_repos=("$@")
@@ -42,7 +85,7 @@ workflow_trigger() {
         '{workflow_type: $wt, plane_issue_id: $pid, params: $params}')
 
     local resp
-    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/workflow/trigger" \
+    resp=$(curl -sf -X POST "${gateway_url}/api/workflow/trigger" \
         -H "Content-Type: application/json" \
         -d "$body" 2>&1) || {
         echo "Error: Failed to trigger workflow" >&2
@@ -53,7 +96,12 @@ workflow_trigger() {
 }
 
 workflow_callback() {
-    check_var GATEWAY_URL
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
     check_var NANOCLAW_DISPATCH_SECRET
     # Args: dispatch_id skill status output_json [error]
     local dispatch_id="$1" skill="$2" status="$3" output_json="${4:-{}}" err="${5:-}"
@@ -69,7 +117,7 @@ workflow_callback() {
             '{dispatch_id:$d, skill:$s, status:$st, output:$o}')
     fi
     local resp
-    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/workflow/callback" \
+    resp=$(curl -sf -X POST "${gateway_url}/api/workflow/callback" \
         -H "X-System-Secret: ${NANOCLAW_DISPATCH_SECRET}" \
         -H "Content-Type: application/json" \
         -d "$body" 2>&1) || {
@@ -81,7 +129,12 @@ workflow_callback() {
 }
 
 rag_search() {
-    check_var GATEWAY_URL
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
     check_var NANOCLAW_DISPATCH_SECRET
     local workspace_id="$1" question="$2" top_k="${3:-8}"
     local body
@@ -89,7 +142,7 @@ rag_search() {
         --arg w "$workspace_id" --arg q "$question" --argjson k "$top_k" \
         '{workspace_id:$w, q:$q, top_k:$k}')
     local resp
-    resp=$(curl -sf -X POST "${GATEWAY_URL}/api/rag/search" \
+    resp=$(curl -sf -X POST "${gateway_url}/api/rag/search" \
         -H "X-System-Secret: ${NANOCLAW_DISPATCH_SECRET}" \
         -H "Content-Type: application/json" \
         -d "$body" 2>&1) || {
@@ -101,19 +154,84 @@ rag_search() {
 }
 
 workflow_status() {
-    check_var GATEWAY_URL
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
     local issue_id="$1"
     # Note: Gateway /api/workflow/executions currently only supports
     # workflow_type, status, limit filters — not plane_issue_id.
     # We fetch recent executions and filter client-side.
     local resp
-    resp=$(curl -sf "${GATEWAY_URL}/api/workflow/executions?limit=50" 2>&1) || {
+    resp=$(curl -sf "${gateway_url}/api/workflow/executions?limit=50" 2>&1) || {
         echo "Error: Failed to query workflow status" >&2
         echo "$resp" >&2
         exit 1
     }
     # Filter by plane_issue_id client-side
     echo "$resp" | jq --arg pid "$issue_id" '[.data[] | select(.plane_issue_id == $pid)]'
+}
+
+issues_my() {
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
+
+    local header_args=()
+    while IFS= read -r header; do
+        header_args+=(-H "$header")
+    done < <(interactive_headers)
+
+    local resp
+    resp=$(curl -sf "${gateway_url}/api/arcflow/issues" \
+        "${header_args[@]}" 2>&1) || {
+        echo "Error: Failed to query my issues" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp" | jq .
+}
+
+requirement_draft() {
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
+
+    local title="$1" content="$2" execute_flag="${3:-}"
+    local dry_run=true
+    if [[ "$execute_flag" == "--execute" ]]; then
+        dry_run=false
+    fi
+
+    local header_args=()
+    while IFS= read -r header; do
+        header_args+=(-H "$header")
+    done < <(interactive_headers)
+
+    local body
+    body=$(jq -n \
+        --arg title "$title" \
+        --arg content "$content" \
+        --argjson dryRun "$dry_run" \
+        '{title:$title, content:$content, dryRun:$dryRun}')
+
+    local resp
+    resp=$(curl -sf -X POST "${gateway_url}/api/arcflow/requirements/drafts" \
+        "${header_args[@]}" \
+        -d "$body" 2>&1) || {
+        echo "Error: Failed to create requirement draft" >&2
+        echo "$resp" >&2
+        exit 1
+    }
+    echo "$resp" | jq .
 }
 
 # --- RAG commands ---
@@ -200,6 +318,8 @@ Usage:
   arcflow-api workflow trigger <type> <issue_id> [target_repos...]
   arcflow-api workflow status <issue_id>
   arcflow-api workflow callback <dispatch_id> <skill> <status> <output_json> [error]
+  arcflow-api issues my
+  arcflow-api requirements draft <title> <content> [--execute]
   arcflow-api rag query "question"
   arcflow-api rag search <workspace_id> "question" [top_k]
   arcflow-api wiki list
@@ -244,6 +364,22 @@ case "$1" in
             search)
                 [[ $# -lt 4 ]] && usage
                 rag_search "$3" "$4" "${5:-8}"
+                ;;
+            *) usage ;;
+        esac
+        ;;
+    issues)
+        [[ $# -lt 2 ]] && usage
+        case "$2" in
+            my) issues_my ;;
+            *) usage ;;
+        esac
+        ;;
+    requirements)
+        [[ $# -lt 4 ]] && usage
+        case "$2" in
+            draft)
+                requirement_draft "$3" "$4" "${5:-}"
                 ;;
             *) usage ;;
         esac

@@ -66,6 +66,7 @@ import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { parseStructuredOutput } from './structured-output.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -283,8 +284,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let sawMessageDelta = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
+    if (result.eventType && channel.sendEvent) {
+      await channel.sendEvent(chatJid, result.eventType, result.eventData ?? {});
+      if (result.eventType === 'message_delta') {
+        sawMessageDelta = true;
+        outputSentToUser = true;
+      }
+      return;
+    }
+
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -293,16 +304,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      const structured = parseStructuredOutput(text);
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
+      if (channel.sendEvent) {
+        for (const skill of structured.skillsLoaded) {
+          await channel.sendEvent(chatJid, 'skill_loaded', { name: skill });
+        }
+        for (const artifact of structured.artifacts) {
+          await channel.sendEvent(chatJid, 'artifact', artifact);
+        }
+      }
+      if (sawMessageDelta && channel.sendEvent) {
+        await channel.sendEvent(chatJid, 'message_end', {});
+      } else if (structured.cleanText) {
+        await channel.sendMessage(chatJid, structured.cleanText);
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
 
-    if (result.status === 'success') {
+    if (result.status === 'success' && !result.eventType) {
       queue.notifyIdle(chatJid);
     }
 

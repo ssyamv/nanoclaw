@@ -227,6 +227,47 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
+  it('streams event markers through onOutput without treating them as final result', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: null,
+      eventType: 'message_delta',
+      eventData: { text: 'Hello' },
+      newSessionId: 'session-events',
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Hello',
+      newSessionId: 'session-events',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'message_delta',
+        eventData: { text: 'Hello' },
+      }),
+    );
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'Hello',
+      }),
+    );
+    expect(result.status).toBe('success');
+  });
+
   it('mounts credentials file when auth is provided', async () => {
     const { spawn } = await import('child_process');
     const spawnMock = vi.mocked(spawn);

@@ -58,6 +58,8 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  eventType?: string;
+  eventData?: Record<string, unknown>;
 }
 
 interface VolumeMount {
