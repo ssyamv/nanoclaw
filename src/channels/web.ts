@@ -304,7 +304,9 @@ export class WebChannel implements Channel {
     logger.info('Web channel disconnected');
   }
 
-  private parseLastEventId(header: string | string[] | undefined): number | null {
+  private parseLastEventId(
+    header: string | string[] | undefined,
+  ): number | null {
     const raw = Array.isArray(header) ? header[0] : header;
     if (!raw) return null;
     const parsed = Number.parseInt(raw, 10);

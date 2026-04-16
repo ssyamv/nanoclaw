@@ -96,7 +96,12 @@ async function runScript(
         ...process.env,
         PATH: process.env.PATH,
         GATEWAY_URL: gatewayUrl,
-        ARCFLOW_CREDENTIALS_FILE: path.join(root, 'run', 'arcflow', 'credentials.json'),
+        ARCFLOW_CREDENTIALS_FILE: path.join(
+          root,
+          'run',
+          'arcflow',
+          'credentials.json',
+        ),
       },
     });
   } finally {
@@ -171,7 +176,13 @@ describe('arcflow-api CLI', () => {
     cleanups.push(gateway.close);
 
     await runScript(
-      ['requirements', 'draft', '统一登录改造', '需要支持 SSO 与权限分级', '--execute'],
+      [
+        'requirements',
+        'draft',
+        '统一登录改造',
+        '需要支持 SSO 与权限分级',
+        '--execute',
+      ],
       gateway.url,
     );
 

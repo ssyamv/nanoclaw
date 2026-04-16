@@ -30,7 +30,9 @@ describe('internal tag parser', () => {
     const events3 = parseInternalTagDelta('rnal>done', state);
     const finalEvents = flushInternalTagParser(state);
 
-    expect(events1).toEqual([{ type: 'message_delta', data: { text: 'Hello' } }]);
+    expect(events1).toEqual([
+      { type: 'message_delta', data: { text: 'Hello' } },
+    ]);
     expect(events2).toEqual([
       { type: 'thinking_start' },
       { type: 'thinking_delta', data: { text: 'abc' } },

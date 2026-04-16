@@ -288,7 +288,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     if (result.eventType && channel.sendEvent) {
-      await channel.sendEvent(chatJid, result.eventType, result.eventData ?? {});
+      await channel.sendEvent(
+        chatJid,
+        result.eventType,
+        result.eventData ?? {},
+      );
       if (result.eventType === 'message_delta') {
         sawMessageDelta = true;
         outputSentToUser = true;
