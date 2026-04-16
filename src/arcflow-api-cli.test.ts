@@ -197,7 +197,9 @@ describe('arcflow-api CLI', () => {
     const gateway = await withGatewayServer(() => ({
       body: {
         workspace: { id: 3, slug: 'acme' },
-        recent_user_actions: [{ action_type: 'nanoclaw.dispatch.arcflow-prd-to-tech' }],
+        recent_user_actions: [
+          { action_type: 'nanoclaw.dispatch.arcflow-prd-to-tech' },
+        ],
       },
     }));
     cleanups.push(gateway.close);

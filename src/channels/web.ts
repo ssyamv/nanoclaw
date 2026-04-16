@@ -47,10 +47,7 @@ export class WebChannel implements Channel {
       verify ?? ((token: string) => verifyViaGateway(gatewayUrl, token));
   }
 
-  private canonicalJid(
-    clientId: string,
-    ctx?: VerifiedContext,
-  ): string {
+  private canonicalJid(clientId: string, ctx?: VerifiedContext): string {
     if (ctx?.userId) return `web:user-${ctx.userId}`;
     return `web:${clientId}`;
   }
