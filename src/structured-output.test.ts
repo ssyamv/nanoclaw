@@ -29,4 +29,25 @@ describe('parseStructuredOutput', () => {
     expect(parsed.artifacts).toEqual([]);
     expect(parsed.skillsLoaded).toEqual([]);
   });
+
+  it('extracts arcflow artifacts from explicit markers', () => {
+    const text = `我帮你查到了结果。
+
+===ARCFLOW_ARTIFACT_START===
+{"id":"arcflow-1","type":"arcflow_card","title":"我的 Issue","content":"{\\"fields\\":[{\\"label\\":\\"Issue\\",\\"value\\":\\"ISS-1 Need review\\"}],\\"actions\\":[{\\"label\\":\\"打开 Plane\\",\\"url\\":\\"https://plane.example.com/issues/ISS-1\\"}]}"}
+===ARCFLOW_ARTIFACT_END===`;
+
+    const parsed = parseStructuredOutput(text);
+    expect(parsed.cleanText).toBe('我帮你查到了结果。');
+    expect(parsed.skillsLoaded).toContain('arcflow-api');
+    expect(parsed.artifacts).toEqual([
+      {
+        id: 'arcflow-1',
+        type: 'arcflow_card',
+        title: '我的 Issue',
+        content:
+          '{"fields":[{"label":"Issue","value":"ISS-1 Need review"}],"actions":[{"label":"打开 Plane","url":"https://plane.example.com/issues/ISS-1"}]}',
+      },
+    ]);
+  });
 });

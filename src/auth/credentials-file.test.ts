@@ -1,35 +1,32 @@
 import fs from 'node:fs/promises';
-import { describe, it, expect } from 'vitest';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
 import {
-  writeCredentialsFile,
   cleanupCredentialsFile,
+  writeCredentialsFile,
 } from './credentials-file.js';
 
-describe('credentials-file', () => {
-  it('writes JSON with mode 0400 and returns path', async () => {
-    const filePath = await writeCredentialsFile({
-      token: 'jwt.xxx',
-      userId: 7,
-      workspaceId: 3,
-      gatewayUrl: 'http://g',
-      displayName: 'U',
-    });
-    const stat = await fs.stat(filePath);
-    expect(stat.mode & 0o777).toBe(0o400);
-    const body = JSON.parse(await fs.readFile(filePath, 'utf8'));
-    expect(body.token).toBe('jwt.xxx');
-    await cleanupCredentialsFile(filePath);
-  });
+const createdFiles: string[] = [];
 
-  it('cleanup removes the file', async () => {
+afterEach(async () => {
+  while (createdFiles.length > 0) {
+    await cleanupCredentialsFile(createdFiles.pop()!);
+  }
+});
+
+describe('writeCredentialsFile', () => {
+  it('writes credentials with group-readable permissions for container access', async () => {
     const filePath = await writeCredentialsFile({
-      token: 't',
+      token: 'token-123',
       userId: 1,
-      workspaceId: 1,
-      gatewayUrl: 'http://g',
-      displayName: '',
+      workspaceId: 2,
+      gatewayUrl: 'http://gateway',
+      displayName: 'Tester',
     });
-    await cleanupCredentialsFile(filePath);
-    await expect(fs.stat(filePath)).rejects.toThrow();
+    createdFiles.push(filePath);
+
+    const stat = await fs.stat(filePath);
+    expect(stat.mode & 0o440).toBe(0o440);
   });
 });

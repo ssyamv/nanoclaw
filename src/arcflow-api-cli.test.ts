@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseStructuredOutput } from './structured-output.js';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.resolve(
@@ -133,7 +134,11 @@ describe('arcflow-api CLI', () => {
     expect(gateway.requests[0].url).toBe('/api/arcflow/issues');
     expect(gateway.requests[0].headers.authorization).toBe('Bearer token-123');
     expect(gateway.requests[0].headers['x-workspace-id']).toBe('3');
-    expect(stdout).toContain('"id": "ISS-1"');
+    const parsed = parseStructuredOutput(stdout);
+    expect(parsed.cleanText).toContain('查到 1 条');
+    expect(parsed.artifacts).toHaveLength(1);
+    expect(parsed.artifacts[0].type).toBe('arcflow_card');
+    expect(parsed.artifacts[0].title).toBe('我的 Issue');
   });
 
   it('requirements draft defaults to dryRun true', async () => {
@@ -161,7 +166,10 @@ describe('arcflow-api CLI', () => {
       content: '需要支持 SSO 与权限分级',
       dryRun: true,
     });
-    expect(stdout).toContain('"mode": "dry_run"');
+    const parsed = parseStructuredOutput(stdout);
+    expect(parsed.cleanText).toContain('需求草稿预览');
+    expect(parsed.artifacts).toHaveLength(1);
+    expect(parsed.artifacts[0].type).toBe('arcflow_card');
   });
 
   it('requirements draft --execute sends dryRun false', async () => {
@@ -212,5 +220,35 @@ describe('arcflow-api CLI', () => {
     expect(gateway.requests[0].headers.authorization).toBe('Bearer token-123');
     expect(gateway.requests[0].headers['x-workspace-id']).toBe('3');
     expect(stdout).toContain('"slug": "acme"');
+  });
+
+  it('issues my returns arcflow_status artifact when result is empty', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: {
+        items: [],
+      },
+    }));
+    cleanups.push(gateway.close);
+
+    const { stdout } = await runScript(['issues', 'my'], gateway.url);
+
+    const parsed = parseStructuredOutput(stdout);
+    expect(parsed.cleanText).toContain('当前没有分配给你的 Issue');
+    expect(parsed.artifacts).toHaveLength(1);
+    expect(parsed.artifacts[0].type).toBe('arcflow_status');
+  });
+
+  it('issues my surfaces gateway errors with non-zero exit', async () => {
+    const gateway = await withGatewayServer(() => ({
+      status: 502,
+      body: {
+        error: 'bad gateway',
+      },
+    }));
+    cleanups.push(gateway.close);
+
+    await expect(runScript(['issues', 'my'], gateway.url)).rejects.toMatchObject({
+      stderr: expect.stringContaining('Error: Failed to query my issues'),
+    });
   });
 });

@@ -15,6 +15,12 @@ credentials_file() {
     echo "${ARCFLOW_CREDENTIALS_FILE:-/run/arcflow/credentials.json}"
 }
 
+json_stringify() {
+    local js="$1"
+    shift
+    env "$@" node -e "const out = (() => { ${js} })(); process.stdout.write(JSON.stringify(out));"
+}
+
 read_credential() {
     local key="$1"
     local file
@@ -23,7 +29,12 @@ read_credential() {
         echo ""
         return 0
     fi
-    jq -r ".$key // empty" "$file"
+    KEY="$key" FILE="$file" node -e '
+const fs = require("fs");
+const obj = JSON.parse(fs.readFileSync(process.env.FILE, "utf8"));
+const value = obj?.[process.env.KEY];
+process.stdout.write(value == null ? "" : String(value));
+'
 }
 
 resolve_gateway_url() {
@@ -47,6 +58,21 @@ interactive_headers() {
         "Authorization: Bearer ${token}" \
         "X-Workspace-Id: ${workspace_id}" \
         "Content-Type: application/json"
+}
+
+emit_arcflow_artifact() {
+    local artifact_id="$1" artifact_type="$2" title="$3" content_json="$4"
+    echo "===ARCFLOW_ARTIFACT_START==="
+    ARTIFACT_ID="$artifact_id" ARTIFACT_TYPE="$artifact_type" ARTIFACT_TITLE="$title" ARTIFACT_CONTENT="$content_json" node -e '
+const artifact = {
+  id: process.env.ARTIFACT_ID,
+  type: process.env.ARTIFACT_TYPE,
+  title: process.env.ARTIFACT_TITLE,
+  content: process.env.ARTIFACT_CONTENT,
+};
+process.stdout.write(JSON.stringify(artifact));
+'
+    echo "===ARCFLOW_ARTIFACT_END==="
 }
 
 # --- Workflow commands ---
@@ -194,7 +220,45 @@ issues_my() {
         echo "$resp" >&2
         exit 1
     }
-    echo "$resp" | jq .
+
+    local count
+    count=$(RESP="$resp" node -e '
+const obj = JSON.parse(process.env.RESP);
+process.stdout.write(String(Array.isArray(obj.items) ? obj.items.length : 0));
+')
+    if [[ "$count" -eq 0 ]]; then
+        local status_content
+        status_content=$(json_stringify 'return {
+  stage: process.env.STAGE,
+  progress: Number(process.env.PROGRESS),
+  detail: process.env.DETAIL,
+};' \
+          STAGE="empty" \
+          PROGRESS="100" \
+          DETAIL="当前工作空间没有分配给你的 Issue")
+        echo "当前没有分配给你的 Issue。"
+        emit_arcflow_artifact "issues-empty" "arcflow_status" "暂无待处理 Issue" "$status_content"
+        return 0
+    fi
+
+    local fields
+    fields=$(RESP="$resp" node -e '
+const obj = JSON.parse(process.env.RESP);
+const fields = Array.isArray(obj.items)
+  ? obj.items.map((item) => ({
+      label: String(item?.id ?? ""),
+      value: String(item?.name ?? ""),
+    }))
+  : [];
+process.stdout.write(JSON.stringify(fields));
+')
+    local card_content
+    card_content=$(json_stringify 'return {
+  fields: JSON.parse(process.env.FIELDS),
+  actions: [],
+};' FIELDS="$fields")
+    echo "查到 ${count} 条分配给你的 Issue。"
+    emit_arcflow_artifact "issues-list" "arcflow_card" "我的 Issue" "$card_content"
 }
 
 memory_snapshot() {
@@ -249,11 +313,11 @@ requirement_draft() {
     done < <(interactive_headers)
 
     local body
-    body=$(jq -n \
-        --arg title "$title" \
-        --arg content "$content" \
-        --argjson dryRun "$dry_run" \
-        '{title:$title, content:$content, dryRun:$dryRun}')
+    body=$(json_stringify 'return {
+  title: process.env.TITLE,
+  content: process.env.CONTENT,
+  dryRun: process.env.DRY_RUN === "true",
+};' TITLE="$title" CONTENT="$content" DRY_RUN="$dry_run")
 
     local resp
     resp=$(curl -sf -X POST "${gateway_url}/api/arcflow/requirements/drafts" \
@@ -263,7 +327,36 @@ requirement_draft() {
         echo "$resp" >&2
         exit 1
     }
-    echo "$resp" | jq .
+
+    local mode path preview title_text action_url
+    mode=$(RESP="$resp" node -e 'const obj = JSON.parse(process.env.RESP); process.stdout.write(String(obj?.mode ?? ""));')
+    path=$(RESP="$resp" node -e 'const obj = JSON.parse(process.env.RESP); process.stdout.write(String(obj?.path ?? ""));')
+    preview=$(RESP="$resp" node -e 'const obj = JSON.parse(process.env.RESP); process.stdout.write(String(obj?.preview ?? ""));')
+
+    local fields actions card_content
+    fields=$(json_stringify 'return [
+  { label: "路径", value: process.env.PATH_VALUE },
+  { label: "模式", value: process.env.MODE_VALUE },
+  { label: "预览", value: process.env.PREVIEW_VALUE },
+];' PATH_VALUE="$path" MODE_VALUE="$mode" PREVIEW_VALUE="$preview")
+    actions='[]'
+    if [[ -n "$path" ]]; then
+        action_url="/docs?path=${path}"
+        actions=$(json_stringify 'return [{ label: "查看文档", url: process.env.ACTION_URL }];' ACTION_URL="$action_url")
+    fi
+    card_content=$(json_stringify 'return {
+  fields: JSON.parse(process.env.FIELDS),
+  actions: JSON.parse(process.env.ACTIONS),
+};' FIELDS="$fields" ACTIONS="$actions")
+
+    if [[ "$mode" == "created" ]]; then
+        title_text="需求草稿已创建"
+        echo "需求草稿已创建。"
+    else
+        title_text="需求草稿预览"
+        echo "需求草稿预览已生成，请确认后再执行创建。"
+    fi
+    emit_arcflow_artifact "requirement-draft-${mode:-unknown}" "arcflow_card" "$title_text" "$card_content"
 }
 
 # --- RAG commands ---

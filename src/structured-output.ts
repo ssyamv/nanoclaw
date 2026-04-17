@@ -13,6 +13,8 @@ export interface StructuredOutput {
 
 const PRD_MARKER_START = '===PRD_RESULT_START===';
 const PRD_MARKER_END = '===PRD_RESULT_END===';
+const ARCFLOW_ARTIFACT_START = '===ARCFLOW_ARTIFACT_START===';
+const ARCFLOW_ARTIFACT_END = '===ARCFLOW_ARTIFACT_END===';
 
 function extractBetween(
   text: string,
@@ -36,6 +38,17 @@ function titleFromMarkdown(markdown: string): string {
   return 'PRD 草稿';
 }
 
+function joinCleanText(before: string, after: string): string {
+  const left = before.trimEnd();
+  const right = after.trimStart();
+  if (left && right) return `${left}\n\n${right}`;
+  return `${left}${right}`;
+}
+
+function pushUniqueSkill(skillsLoaded: string[], name: string): void {
+  if (!skillsLoaded.includes(name)) skillsLoaded.push(name);
+}
+
 export function parseStructuredOutput(text: string): StructuredOutput {
   const artifacts: StructuredArtifact[] = [];
   const skillsLoaded: string[] = [];
@@ -50,8 +63,36 @@ export function parseStructuredOutput(text: string): StructuredOutput {
       title: titleFromMarkdown(markdown),
       content: markdown,
     });
-    skillsLoaded.push('arcflow-prd-draft');
-    cleanText = `${prd.before}${prd.after}`.trim();
+    pushUniqueSkill(skillsLoaded, 'arcflow-prd-draft');
+    cleanText = joinCleanText(prd.before, prd.after).trim();
+  }
+
+  while (true) {
+    const block = extractBetween(
+      cleanText,
+      ARCFLOW_ARTIFACT_START,
+      ARCFLOW_ARTIFACT_END,
+    );
+    if (!block) break;
+
+    try {
+      const artifact = JSON.parse(block.body.trim()) as StructuredArtifact;
+      if (
+        typeof artifact.id === 'string' &&
+        typeof artifact.type === 'string' &&
+        typeof artifact.title === 'string' &&
+        typeof artifact.content === 'string'
+      ) {
+        artifacts.push(artifact);
+        pushUniqueSkill(skillsLoaded, 'arcflow-api');
+        cleanText = joinCleanText(block.before, block.after).trim();
+        continue;
+      }
+    } catch {
+      // Keep the raw block in the visible text if the payload is malformed.
+    }
+
+    break;
   }
 
   return {

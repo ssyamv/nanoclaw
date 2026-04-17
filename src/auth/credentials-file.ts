@@ -13,7 +13,9 @@ export interface Credentials {
 export async function writeCredentialsFile(c: Credentials): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'arcflow-creds-'));
   const filePath = path.join(dir, 'credentials.json');
-  await fs.writeFile(filePath, JSON.stringify(c), { mode: 0o400 });
+  // The host creates this file, but the agent container may run as a different
+  // user. Keep the file readonly while allowing the container process to read it.
+  await fs.writeFile(filePath, JSON.stringify(c), { mode: 0o444 });
   return filePath;
 }
 
