@@ -282,6 +282,7 @@ async function buildContainerArgs(
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'NANOCLAW_DISPATCH_SECRET',
   ]);
   for (const [key, value] of Object.entries(arcflowEnvVars)) {
     args.push('-e', `${key}=${value}`);

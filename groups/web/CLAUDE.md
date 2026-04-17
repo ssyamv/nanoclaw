@@ -29,9 +29,9 @@ arcflow-api workflow status ISSUE-123
 
 # 文档与知识问答
 arcflow-api rag query "用户登录的接口定义在哪？"
-arcflow-api wiki list
-arcflow-api wiki search "用户注册"
-arcflow-api wiki read prd/user-registration
+arcflow-api wiki search "home"
+arcflow-api wiki search "Homture"
+arcflow-api wiki read 产品文档/home.md
 ```
 
 ### 2. Plane MCP
@@ -46,7 +46,7 @@ arcflow-api wiki read prd/user-registration
 
 ## ArcFlow Web 决策规则
 
-处理 ArcFlow 相关请求时，默认优先使用 `arcflow-api`，不要先凭空回答。
+处理 ArcFlow 相关请求时，默认优先使用 `arcflow-api`，不要先凭空回答，也不要在未尝试 ArcFlow 工具前先用 Bash 搜 `/workspace`。
 
 ### 1. Issue 查询
 
@@ -68,8 +68,10 @@ arcflow-api wiki read prd/user-registration
 ### 3. 文档与知识问答
 
 - 缺上下文时，优先 `arcflow-api memory snapshot`
+- 当用户问“介绍一下这个项目 / Homture 是什么 / 当前项目进展 / 关键文档在哪”这类项目总览问题时，先执行 `arcflow-api wiki search "home"`、`arcflow-api wiki search "Homture"`，必要时再 `arcflow-api wiki read <path>`
 - 查定义、查方案、查接口位置：优先 `arcflow-api rag query`
-- 查 docs 仓库已有文档：优先 `arcflow-api wiki`
+- 需要精确路径、原文内容或目录结构时：优先 `arcflow-api wiki`
+- 只有在 ArcFlow 工具明确失败或查不到时，才退回到 Bash；不要直接搜索 `/workspace` 作为第一选择
 
 ### 4. 工作流触发
 

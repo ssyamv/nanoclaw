@@ -97,6 +97,7 @@ async function runScript(
         ...process.env,
         PATH: process.env.PATH,
         GATEWAY_URL: gatewayUrl,
+        NANOCLAW_DISPATCH_SECRET: 'secret-123',
         ARCFLOW_CREDENTIALS_FILE: path.join(
           root,
           'run',
@@ -201,6 +202,42 @@ describe('arcflow-api CLI', () => {
     });
   });
 
+  it('rag search uses gateway GET endpoint with system secret header', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: {
+        chunks: [{ docPath: '产品文档/home.md', heading: '概述', content: 'Homture 是 AI 相框项目。', score: 0.9 }],
+      },
+    }));
+    cleanups.push(gateway.close);
+
+    const { stdout } = await runScript(['rag', 'search', '3', '介绍一下 Homture', '5'], gateway.url);
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0].method).toBe('GET');
+    expect(gateway.requests[0].url).toContain('/api/rag/search?');
+    expect(gateway.requests[0].url).toContain('workspace_id=3');
+    expect(gateway.requests[0].headers['x-system-secret']).toBe('secret-123');
+    expect(stdout).toContain('产品文档/home.md');
+  });
+
+  it('wiki search uses gateway docs endpoint with auth headers', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: {
+        data: [{ path: '产品文档/home.md', name: 'home.md', matches: ['Homture 项目总览'] }],
+      },
+    }));
+    cleanups.push(gateway.close);
+
+    const { stdout } = await runScript(['wiki', 'search', 'Homture'], gateway.url);
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0].method).toBe('GET');
+    expect(gateway.requests[0].url).toContain('/api/docs/search?');
+    expect(gateway.requests[0].headers.authorization).toBe('Bearer token-123');
+    expect(gateway.requests[0].headers['x-workspace-id']).toBe('3');
+    expect(stdout).toContain('产品文档/home.md');
+  });
+
   it('memory snapshot uses workspace from credentials by default', async () => {
     const gateway = await withGatewayServer(() => ({
       body: {
@@ -247,9 +284,7 @@ describe('arcflow-api CLI', () => {
     }));
     cleanups.push(gateway.close);
 
-    await expect(
-      runScript(['issues', 'my'], gateway.url),
-    ).rejects.toMatchObject({
+    await expect(runScript(['issues', 'my'], gateway.url)).rejects.toMatchObject({
       stderr: expect.stringContaining('Error: Failed to query my issues'),
     });
   });

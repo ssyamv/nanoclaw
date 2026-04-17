@@ -163,15 +163,12 @@ rag_search() {
     fi
     check_var NANOCLAW_DISPATCH_SECRET
     local workspace_id="$1" question="$2" top_k="${3:-8}"
-    local body
-    body=$(jq -n \
-        --arg w "$workspace_id" --arg q "$question" --argjson k "$top_k" \
-        '{workspace_id:$w, q:$q, top_k:$k}')
     local resp
-    resp=$(curl -sf -X POST "${gateway_url}/api/rag/search" \
+    resp=$(curl -sfG "${gateway_url}/api/rag/search" \
         -H "X-System-Secret: ${NANOCLAW_DISPATCH_SECRET}" \
-        -H "Content-Type: application/json" \
-        -d "$body" 2>&1) || {
+        --data-urlencode "workspace_id=${workspace_id}" \
+        --data-urlencode "q=${question}" \
+        --data-urlencode "top_k=${top_k}" 2>&1) || {
         echo "Error: RAG search failed" >&2
         echo "$resp" >&2
         exit 1
@@ -362,77 +359,103 @@ requirement_draft() {
 # --- RAG commands ---
 
 rag_query() {
-    check_var DIFY_URL
-    check_var DIFY_API_KEY
-    local question="$1"
-    local body
-    body=$(jq -n \
-        --arg q "$question" \
-        '{inputs: {}, query: $q, response_mode: "blocking", user: "nanoclaw"}')
+    local workspace_id question resp
+    workspace_id=$(read_credential workspaceId)
+    if [[ -z "$workspace_id" ]]; then
+        echo "Error: workspaceId is missing from ArcFlow credentials" >&2
+        exit 1
+    fi
+    question="$1"
+    resp=$(rag_search "$workspace_id" "$question" 8)
+    RESP="$resp" node - <<'NODE'
+const obj = JSON.parse(process.env.RESP || '{}');
+const chunks = Array.isArray(obj.chunks) ? obj.chunks : [];
+if (chunks.length === 0) {
+  console.log('未找到相关文档。');
+  process.exit(0);
+}
+console.log('以下是当前工作空间 docs 中最相关的文档片段：');
+console.log('');
+for (const [index, chunk] of chunks.entries()) {
+  const heading = chunk.heading ? ` > ${chunk.heading}` : '';
+  console.log(`[${index + 1}] ${chunk.docPath}${heading}`);
+  console.log(chunk.content);
+  console.log('');
+}
+NODE
+}
+
+# --- Docs commands (ArcFlow docs Git via Gateway) ---
+
+gateway_docs_get() {
+    local endpoint="$1"
+    shift
+    local gateway_url
+    gateway_url=$(resolve_gateway_url)
+    if [[ -z "$gateway_url" ]]; then
+        echo "Error: GATEWAY_URL not set" >&2
+        exit 1
+    fi
+
+    local header_args=()
+    while IFS= read -r header; do
+        header_args+=(-H "$header")
+    done < <(interactive_headers)
 
     local resp
-    resp=$(curl -sf -X POST "${DIFY_URL}/v1/chat-messages" \
-        -H "Authorization: Bearer ${DIFY_API_KEY}" \
-        -H "Content-Type: application/json" \
-        -d "$body" 2>&1) || {
-        echo "Error: Dify RAG query failed" >&2
+    resp=$(curl -sfG "${gateway_url}${endpoint}" \
+        "${header_args[@]}" \
+        "$@" 2>&1) || {
+        echo "Error: Docs query failed" >&2
         echo "$resp" >&2
         exit 1
     }
-    echo "$resp" | jq -r '.answer // .message // .'
-}
-
-# --- Wiki.js commands ---
-
-wiki_graphql() {
-    check_var WIKIJS_URL
-    check_var WIKIJS_API_KEY
-    local query="$1"
-    local body
-    body=$(jq -n --arg q "$query" '{query: $q}')
-
-    curl -sf -X POST "${WIKIJS_URL}/graphql" \
-        -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
-        -H "Content-Type: application/json" \
-        -d "$body" 2>&1 || {
-        echo "Error: Wiki.js query failed" >&2
-        exit 1
-    }
+    echo "$resp"
 }
 
 wiki_list() {
     local resp
-    resp=$(wiki_graphql '{ pages { list(orderBy: UPDATED, limit: 20) { id title path updatedAt } } }')
-    echo "$resp" | jq -r '.data.pages.list[] | "\(.updatedAt)\t\(.path)\t\(.title)"'
+    resp=$(gateway_docs_get "/api/docs/tree")
+    RESP="$resp" node - <<'NODE'
+const obj = JSON.parse(process.env.RESP || '{}');
+const nodes = Array.isArray(obj.data) ? obj.data : [];
+const lines = [];
+function walk(items) {
+  for (const item of items) {
+    lines.push(`${item.type}	${item.path}`);
+    if (Array.isArray(item.children)) walk(item.children);
+  }
+}
+walk(nodes);
+console.log(lines.join('
+'));
+NODE
 }
 
 wiki_search() {
     local keyword="$1"
-    # Use jq to safely escape the keyword into the GraphQL query
-    local query
-    query=$(jq -n --arg kw "$keyword" '{ pages: { search: { query: $kw } } }' |
-        jq -r '"{ pages { search(query: \"\(.pages.search.query)\") { results { id title path description } } } }"' |
-        sed 's/"/\\"/g; s/^"//; s/"$//')
-    # Simpler approach: escape double quotes in input
-    local safe_keyword="${keyword//\"/\\\"}"
-    query="{ pages { search(query: \"${safe_keyword}\") { results { id title path description } } } }"
     local resp
-    resp=$(wiki_graphql "$query")
-    echo "$resp" | jq -r '.data.pages.search.results[] | "\(.path)\t\(.title)\t\(.description // "")"'
+    resp=$(gateway_docs_get "/api/docs/search" --data-urlencode "q=${keyword}")
+    RESP="$resp" node - <<'NODE'
+const obj = JSON.parse(process.env.RESP || '{}');
+const rows = Array.isArray(obj.data) ? obj.data : [];
+for (const row of rows) {
+  const matches = Array.isArray(row.matches) ? row.matches.join(' | ') : '';
+  console.log(`${row.path}	${row.name}	${matches}`);
+}
+NODE
 }
 
 wiki_read() {
     local doc_path="$1"
-    local safe_path="${doc_path//\"/\\\"}"
-    local query="{ pages { single(path: \"${safe_path}\") { title content } } }"
     local resp
-    resp=$(wiki_graphql "$query")
-    local title content
-    title=$(echo "$resp" | jq -r '.data.pages.single.title // "Unknown"')
-    content=$(echo "$resp" | jq -r '.data.pages.single.content // "Not found"')
-    echo "# $title"
-    echo ""
-    echo "$content"
+    resp=$(gateway_docs_get "/api/docs/file" --data-urlencode "path=${doc_path}")
+    RESP="$resp" node - <<'NODE'
+const obj = JSON.parse(process.env.RESP || '{}');
+console.log(`# ${obj.path || 'Unknown'}`);
+console.log('');
+console.log(obj.content || 'Not found');
+NODE
 }
 
 # --- Usage ---
