@@ -247,7 +247,9 @@ describe('arcflow-api CLI', () => {
     }));
     cleanups.push(gateway.close);
 
-    await expect(runScript(['issues', 'my'], gateway.url)).rejects.toMatchObject({
+    await expect(
+      runScript(['issues', 'my'], gateway.url),
+    ).rejects.toMatchObject({
       stderr: expect.stringContaining('Error: Failed to query my issues'),
     });
   });
