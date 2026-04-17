@@ -5,6 +5,15 @@ import { PassThrough } from 'stream';
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const { loggerMock, applyContainerConfigMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+  applyContainerConfigMock: vi.fn().mockResolvedValue(true),
+}));
 
 // Mock config
 vi.mock('./config.js', () => ({
@@ -14,18 +23,13 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
-  ONECLI_URL: 'http://localhost:10254',
+  ONECLI_URL: '',
   TIMEZONE: 'America/Los_Angeles',
 }));
 
 // Mock logger
 vi.mock('./logger.js', () => ({
-  logger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
+  logger: loggerMock,
 }));
 
 // Mock fs
@@ -62,7 +66,7 @@ vi.mock('./container-runtime.js', () => ({
 // Mock OneCLI SDK
 vi.mock('@onecli-sh/sdk', () => ({
   OneCLI: class {
-    applyContainerConfig = vi.fn().mockResolvedValue(true);
+    applyContainerConfig = applyContainerConfigMock;
     createAgent = vi.fn().mockResolvedValue({ id: 'test' });
     ensureAgent = vi
       .fn()
@@ -134,6 +138,11 @@ describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    applyContainerConfigMock.mockClear();
+    loggerMock.debug.mockClear();
+    loggerMock.info.mockClear();
+    loggerMock.warn.mockClear();
+    loggerMock.error.mockClear();
   });
 
   afterEach(() => {
@@ -303,5 +312,30 @@ describe('container-runner timeout behavior', () => {
         typeof a === 'string' && a.includes('/run/arcflow/credentials.json:ro'),
     );
     expect(mountIdx).toBeGreaterThan(-1);
+  });
+
+  it('skips OneCLI injection when ONECLI_URL is not configured', async () => {
+    const { spawn } = await import('child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+
+    vi.useRealTimers();
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await new Promise((r) => setTimeout(r, 50));
+    fakeProc.emit('close', 0);
+    await resultPromise;
+
+    expect(applyContainerConfigMock).not.toHaveBeenCalled();
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        containerName: expect.stringMatching(/^nanoclaw-test-group-/),
+      }),
+      'OneCLI gateway disabled — using env and mounted credential fallbacks',
+    );
+    expect(loggerMock.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'OneCLI gateway not reachable — container will have no credentials',
+    );
   });
 });
