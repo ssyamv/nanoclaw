@@ -205,12 +205,22 @@ describe('arcflow-api CLI', () => {
   it('rag search uses gateway GET endpoint with system secret header', async () => {
     const gateway = await withGatewayServer(() => ({
       body: {
-        chunks: [{ docPath: '产品文档/home.md', heading: '概述', content: 'Homture 是 AI 相框项目。', score: 0.9 }],
+        chunks: [
+          {
+            docPath: '产品文档/home.md',
+            heading: '概述',
+            content: 'Homture 是 AI 相框项目。',
+            score: 0.9,
+          },
+        ],
       },
     }));
     cleanups.push(gateway.close);
 
-    const { stdout } = await runScript(['rag', 'search', '3', '介绍一下 Homture', '5'], gateway.url);
+    const { stdout } = await runScript(
+      ['rag', 'search', '3', '介绍一下 Homture', '5'],
+      gateway.url,
+    );
 
     expect(gateway.requests).toHaveLength(1);
     expect(gateway.requests[0].method).toBe('GET');
@@ -223,12 +233,21 @@ describe('arcflow-api CLI', () => {
   it('wiki search uses gateway docs endpoint with auth headers', async () => {
     const gateway = await withGatewayServer(() => ({
       body: {
-        data: [{ path: '产品文档/home.md', name: 'home.md', matches: ['Homture 项目总览'] }],
+        data: [
+          {
+            path: '产品文档/home.md',
+            name: 'home.md',
+            matches: ['Homture 项目总览'],
+          },
+        ],
       },
     }));
     cleanups.push(gateway.close);
 
-    const { stdout } = await runScript(['wiki', 'search', 'Homture'], gateway.url);
+    const { stdout } = await runScript(
+      ['wiki', 'search', 'Homture'],
+      gateway.url,
+    );
 
     expect(gateway.requests).toHaveLength(1);
     expect(gateway.requests[0].method).toBe('GET');
@@ -284,7 +303,9 @@ describe('arcflow-api CLI', () => {
     }));
     cleanups.push(gateway.close);
 
-    await expect(runScript(['issues', 'my'], gateway.url)).rejects.toMatchObject({
+    await expect(
+      runScript(['issues', 'my'], gateway.url),
+    ).rejects.toMatchObject({
       stderr: expect.stringContaining('Error: Failed to query my issues'),
     });
   });
