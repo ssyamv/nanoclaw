@@ -42,8 +42,9 @@ arcflow-api workflow trigger code_gen_android <plane_issue_id>
 arcflow-api workflow status <plane_issue_id>
 
 # Post workflow callback to Gateway (used by non-interactive arcflow-* skills)
-# output_json must be a JSON string; on failure pass an error message instead.
+# output_json can be a JSON string or an @/absolute/path/to/payload.json file.
 arcflow-api workflow callback <dispatch_id> <skill> success '<output_json>'
+arcflow-api workflow callback <dispatch_id> <skill> success '@/tmp/payload.json'
 arcflow-api workflow callback <dispatch_id> <skill> failed '{}' "error message"
 
 # Knowledge Q&A via Gateway RAG snippet search

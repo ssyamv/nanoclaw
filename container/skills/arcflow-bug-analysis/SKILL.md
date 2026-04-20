@@ -19,56 +19,43 @@ description: Non-interactive skill. Analyzes CI/CD failure logs and produces a s
 3. 关联可能的代码位置（从堆栈信息中提取类名、方法名、行号）
 4. 评估严重程度（P0/P1/P2）
 
-## 输出格式（Markdown）
+## 结构化输出
 
-```markdown
-## Bug 分析报告
+直接产出一组结构化字段，供 Gateway 回调：
 
-### 基本信息
-- 关联 Issue：（由系统注入）
-- 失败阶段：编译 / 单元测试 / 集成测试
-
-### 错误摘要
-一句话描述错误的核心原因。
-
-### 失败详情
-| 测试用例 | 错误类型 | 错误信息 |
-|----------|----------|----------|
-
-### 根因分析
-分析错误的根本原因，引用日志中的关键信息。
-
-### 定位建议
-列出最可能需要修改的文件和方法。
-
-### 严重级别
-- P0 阻塞：编译失败或核心功能不可用
-- P1 严重：主流程功能异常
-- P2 一般：边缘情况或非核心功能异常
-
-**严重级别:** P1
-
-### 修复建议
-给出具体的修复方向（不写代码，只描述思路）。
-```
+- `summary`
+- `root_cause`
+- `suggested_fix`
+- `confidence`
+- `next_action`
+- `plane_issue_id`
 
 规则：
 
-- 只输出 Markdown 内容，不输出任何解释性文字
-- 如日志信息不足以定位根因，在"根因分析"中明确指出缺少什么信息
-- 严重级别行必须以 `**严重级别:** P0/P1/P2` 格式输出（Gateway 解析此行）
+- `confidence` 只能取 `high`、`medium`、`low`
+- `next_action` 只能取 `auto_fix_candidate`、`manual_handoff`
+- 必须把上面的结构化字段作为主要输出，不再先生成 Markdown 报告再从中解析
 
 ## 执行流程
 
 1. 读取 dispatch 输入的 `ci_log`
-2. 生成 Bug 分析报告 Markdown（赋值给 `$BUG_REPORT`）
-3. 从报告中解析 severity（P0/P1/P2）
+2. 直接生成结构化分析结果
+3. 将回调 payload 写入临时 JSON 文件
 4. 回调：
 
 ```bash
+payload_file="$(mktemp)"
+trap 'rm -f "$payload_file"' EXIT
+jq -n \
+  --arg s "$SUMMARY" \
+  --arg r "$ROOT_CAUSE" \
+  --arg f "$SUGGESTED_FIX" \
+  --arg c "$CONFIDENCE" \
+  --arg n "$NEXT_ACTION" \
+  --arg p "$PLANE_ISSUE_ID" \
+  '{summary:$s, root_cause:$r, suggested_fix:$f, confidence:$c, next_action:$n, plane_issue_id:$p}' > "$payload_file"
 arcflow-api workflow callback "$DISPATCH_ID" arcflow-bug-analysis success \
-  "$(jq -n --arg r "$BUG_REPORT" --arg s "$SEVERITY" --arg p "$PLANE_ISSUE_ID" \
-     '{bug_report:$r, severity:$s, plane_issue_id:$p, fix_attempted:false}')"
+  "@$payload_file"
 ```
 
-本版本不自动修复代码，`fix_attempted` 恒为 `false`。失败则以 `failed` 状态回调。
+失败则以 `failed` 状态回调。
