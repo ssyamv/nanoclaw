@@ -309,13 +309,7 @@ describe('arcflow-api CLI', () => {
     }));
     cleanups.push(gateway.close);
     await runScriptWithPayloadFile(
-      [
-        'workflow',
-        'callback',
-        'dispatch-3',
-        'arcflow-bug-analysis',
-        'success',
-      ],
+      ['workflow', 'callback', 'dispatch-3', 'arcflow-bug-analysis', 'success'],
       gateway.url,
       'bug-analysis.json',
       {
