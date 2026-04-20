@@ -40,12 +40,19 @@ description: Non-interactive skill. Reads a PRD from docs repo and generates a t
 1. 使用 Read 工具读取 `prd_path` 指向的 PRD 文件（docs Git 仓库挂载在容器内）
 2. 按上述结构生成技术设计 Markdown
 3. 将结果写入临时路径（建议 `tech-design/<yyyy-mm>/<slug>.md`），路径记为 `tech_doc_path`
-4. 调用回调：
+4. 将回调 payload 写入临时 JSON 文件（包含 `tech_doc_path`、`content`、`plane_issue_id`）
+5. 调用回调：
 
 ```bash
+payload_file="$(mktemp)"
+trap 'rm -f "$payload_file"' EXIT
+jq -n \
+  --arg t "$tech_doc_path" \
+  --rawfile c "$tech_doc_path" \
+  --arg p "$plane_issue_id" \
+  '{tech_doc_path:$t, content:$c, plane_issue_id:$p}' > "$payload_file"
 arcflow-api workflow callback "$DISPATCH_ID" arcflow-prd-to-tech success \
-  "$(jq -n --arg t "$TECH_DOC_PATH" --arg p "$PLANE_ISSUE_ID" \
-     '{tech_doc_path:$t, plane_issue_id:$p}')"
+  "@$payload_file"
 ```
 
 失败时：

@@ -129,8 +129,20 @@ workflow_callback() {
         exit 1
     fi
     check_var NANOCLAW_DISPATCH_SECRET
-    # Args: dispatch_id skill status output_json [error]
-    local dispatch_id="$1" skill="$2" status="$3" output_json="${4:-{}}" err="${5:-}"
+    # Args: dispatch_id skill status output_json|@file [error]
+    local dispatch_id="$1" skill="$2" status="$3" err="${5:-}"
+    local output_json='{}'
+    if [[ $# -ge 4 && -n "$4" ]]; then
+        output_json="$4"
+        if [[ "$output_json" == @* ]]; then
+            local payload_file="${output_json#@}"
+            if [[ -z "$payload_file" || ! -f "$payload_file" ]]; then
+                echo "Error: callback payload file not found: $payload_file" >&2
+                exit 1
+            fi
+            output_json=$(<"$payload_file")
+        fi
+    fi
     local body
     if [[ "$status" == "failed" ]]; then
         body=$(jq -n \
@@ -465,7 +477,7 @@ usage() {
 Usage:
   arcflow-api workflow trigger <type> <issue_id> [target_repos...]
   arcflow-api workflow status <issue_id>
-  arcflow-api workflow callback <dispatch_id> <skill> <status> <output_json> [error]
+  arcflow-api workflow callback <dispatch_id> <skill> <status> <output_json|@file> [error]
   arcflow-api issues my
   arcflow-api memory snapshot [workspace_id]
   arcflow-api requirements draft <title> <content> [--execute]
@@ -498,7 +510,7 @@ case "$1" in
                 ;;
             callback)
                 [[ $# -lt 5 ]] && usage
-                workflow_callback "$3" "$4" "$5" "${6:-{}}" "${7:-}"
+                workflow_callback "$3" "$4" "$5" "${6:-}" "${7:-}"
                 ;;
             *) usage ;;
         esac

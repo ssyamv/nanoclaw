@@ -38,12 +38,19 @@ OpenAPI yaml 并回调 Gateway。
 
 1. Read 读取 `tech_doc_path`
 2. 生成 OpenAPI yaml，写入 `api/<yyyy-mm>/<slug>.yaml`，路径记为 `openapi_path`
-3. 回调：
+3. 将回调 payload 写入临时 JSON 文件（包含 `openapi_path`、`content`、`plane_issue_id`）
+4. 回调：
 
 ```bash
+payload_file="$(mktemp)"
+trap 'rm -f "$payload_file"' EXIT
+jq -n \
+  --arg o "$openapi_path" \
+  --rawfile c "$openapi_path" \
+  --arg p "$plane_issue_id" \
+  '{openapi_path:$o, content:$c, plane_issue_id:$p}' > "$payload_file"
 arcflow-api workflow callback "$DISPATCH_ID" arcflow-tech-to-openapi success \
-  "$(jq -n --arg o "$OPENAPI_PATH" --arg p "$PLANE_ISSUE_ID" \
-     '{openapi_path:$o, plane_issue_id:$p}')"
+  "@$payload_file"
 ```
 
 失败时以 `failed` 状态回调并附 `error` 字符串。

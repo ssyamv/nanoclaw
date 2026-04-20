@@ -111,6 +111,40 @@ async function runScript(
   }
 }
 
+async function runScriptWithPayloadFile(
+  args: string[],
+  gatewayUrl: string,
+  payloadFileName: string,
+  payload: unknown,
+): Promise<{ stdout: string; stderr: string }> {
+  const root = await makeCredentialsDir(gatewayUrl);
+  const payloadPath = path.join(root, payloadFileName);
+  await fs.writeFile(payloadPath, `${JSON.stringify(payload)}\n`);
+  try {
+    return await execFileAsync(
+      '/bin/bash',
+      [SCRIPT_PATH, ...args, `@${payloadPath}`],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PATH: process.env.PATH,
+          GATEWAY_URL: gatewayUrl,
+          NANOCLAW_DISPATCH_SECRET: 'secret-123',
+          ARCFLOW_CREDENTIALS_FILE: path.join(
+            root,
+            'run',
+            'arcflow',
+            'credentials.json',
+          ),
+        },
+      },
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -199,6 +233,108 @@ describe('arcflow-api CLI', () => {
       title: '统一登录改造',
       content: '需要支持 SSO 与权限分级',
       dryRun: false,
+    });
+  });
+
+  it('workflow callback wraps prd-to-tech success output in the strict envelope', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: { ok: true },
+    }));
+    cleanups.push(gateway.close);
+    await runScriptWithPayloadFile(
+      ['workflow', 'callback', 'dispatch-1', 'arcflow-prd-to-tech', 'success'],
+      gateway.url,
+      'prd-to-tech.json',
+      {
+        tech_doc_path: 'tech-design/2026-04/demo.md',
+        content: '# Tech doc',
+        plane_issue_id: 'ISS-1',
+      },
+    );
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(gateway.requests[0].method).toBe('POST');
+    expect(gateway.requests[0].url).toBe('/api/workflow/callback');
+    expect(gateway.requests[0].headers['x-system-secret']).toBe('secret-123');
+    expect(JSON.parse(gateway.requests[0].body)).toEqual({
+      dispatch_id: 'dispatch-1',
+      skill: 'arcflow-prd-to-tech',
+      status: 'success',
+      output: {
+        tech_doc_path: 'tech-design/2026-04/demo.md',
+        content: '# Tech doc',
+        plane_issue_id: 'ISS-1',
+      },
+    });
+  });
+
+  it('workflow callback wraps tech-to-openapi success output in the strict envelope', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: { ok: true },
+    }));
+    cleanups.push(gateway.close);
+    await runScriptWithPayloadFile(
+      [
+        'workflow',
+        'callback',
+        'dispatch-2',
+        'arcflow-tech-to-openapi',
+        'success',
+      ],
+      gateway.url,
+      'tech-to-openapi.json',
+      {
+        openapi_path: 'api/2026-04/demo.yaml',
+        content: 'openapi: 3.0.3',
+        plane_issue_id: 'ISS-2',
+      },
+    );
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(JSON.parse(gateway.requests[0].body)).toEqual({
+      dispatch_id: 'dispatch-2',
+      skill: 'arcflow-tech-to-openapi',
+      status: 'success',
+      output: {
+        openapi_path: 'api/2026-04/demo.yaml',
+        content: 'openapi: 3.0.3',
+        plane_issue_id: 'ISS-2',
+      },
+    });
+  });
+
+  it('workflow callback wraps bug-analysis success output in the strict envelope', async () => {
+    const gateway = await withGatewayServer(() => ({
+      body: { ok: true },
+    }));
+    cleanups.push(gateway.close);
+    await runScriptWithPayloadFile(
+      ['workflow', 'callback', 'dispatch-3', 'arcflow-bug-analysis', 'success'],
+      gateway.url,
+      'bug-analysis.json',
+      {
+        summary: '编译失败',
+        root_cause: '缺少依赖',
+        suggested_fix: '补充依赖后重试',
+        confidence: 'high',
+        next_action: 'manual_handoff',
+        plane_issue_id: 'ISS-3',
+      },
+    );
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(JSON.parse(gateway.requests[0].body)).toEqual({
+      dispatch_id: 'dispatch-3',
+      skill: 'arcflow-bug-analysis',
+      status: 'success',
+      output: {
+        summary: '编译失败',
+        root_cause: '缺少依赖',
+        suggested_fix: '补充依赖后重试',
+        confidence: 'high',
+        next_action: 'manual_handoff',
+        plane_issue_id: 'ISS-3',
+      },
     });
   });
 
